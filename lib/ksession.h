@@ -44,6 +44,7 @@ class KSession : public QObject
     Q_PROPERTY(QString  history READ getHistory)
     Q_PROPERTY(bool hasActiveProcess READ hasActiveProcess)
     Q_PROPERTY(QString foregroundProcessName READ foregroundProcessName)
+    Q_PROPERTY(QString foregroundProcessLabel READ foregroundProcessLabel)
     Q_PROPERTY(QString currentDir READ currentDir)
 
 public:
@@ -107,6 +108,12 @@ public:
      * Returns the name of the terminal's foreground process.
      */
     QString foregroundProcessName();
+
+    /**
+     * Returns a display label for the foreground process.
+     * For SSH, returns "user@host"; otherwise returns the process name.
+     */
+    QString foregroundProcessLabel();
 
     /**
      * Returns the current working directory of the process.

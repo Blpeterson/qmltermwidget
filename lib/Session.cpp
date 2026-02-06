@@ -978,7 +978,31 @@ QString Session::foregroundProcessName()
     return name;
 }
 
-QString Session::currentDir() 
+// Returns a display label for the foreground process.
+// For SSH, parses command-line arguments to return "user@host".
+// For other processes, returns the plain process name.
+QString Session::foregroundProcessLabel()
+{
+    if (updateForegroundProcessInfo()) {
+        bool ok = false;
+        QString name = _foregroundProcessInfo->name(&ok);
+        if (ok && name == QLatin1String("ssh")) {
+            SSHProcessInfo sshInfo(*_foregroundProcessInfo);
+            QString host = sshInfo.host();
+            if (!host.isEmpty()) {
+                QString user = sshInfo.userName();
+                if (!user.isEmpty())
+                    return user + QLatin1Char('@') + host;
+                return host;
+            }
+        }
+        if (ok)
+            return name;
+    }
+    return QString();
+}
+
+QString Session::currentDir()
 {
     QString path;
     if (updateForegroundProcessInfo()) {

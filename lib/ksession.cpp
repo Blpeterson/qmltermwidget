@@ -324,7 +324,12 @@ QString KSession::foregroundProcessName()
     return m_session->foregroundProcessName();
 }
 
-QString KSession::currentDir() 
+QString KSession::foregroundProcessLabel()
+{
+    return m_session->foregroundProcessLabel();
+}
+
+QString KSession::currentDir()
 {
     return m_session->currentDir();
 }

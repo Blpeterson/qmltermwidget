@@ -336,6 +336,12 @@ public:
     QString foregroundProcessName();
 
     /**
+     * Returns a display label for the foreground process.
+     * For SSH, returns "user@host"; otherwise returns the process name.
+     */
+    QString foregroundProcessLabel();
+
+    /**
      * Returns the current working directory of the process.
      */
     QString currentDir();

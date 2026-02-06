@@ -871,9 +871,38 @@ private:
         return true;
     }
 
+    // Read command-line arguments via sysctl KERN_PROCARGS2.
+    // The returned buffer contains: argc (int), exec path, null padding, then argv strings.
     virtual bool readArguments(int aPid) {
-        Q_UNUSED(aPid);
-        return false;
+        int mib[3] = { CTL_KERN, KERN_PROCARGS2, aPid };
+        size_t size = 0;
+        if (sysctl(mib, 3, NULL, &size, NULL, 0) == -1)
+            return false;
+
+        QByteArray buf(size, '\0');
+        if (sysctl(mib, 3, buf.data(), &size, NULL, 0) == -1)
+            return false;
+
+        if (size < sizeof(int))
+            return false;
+
+        int argc;
+        memcpy(&argc, buf.constData(), sizeof(int));
+
+        const char *p = buf.constData() + sizeof(int);
+        const char *end = buf.constData() + size;
+
+        // Skip exec path
+        while (p < end && *p != '\0') p++;
+        // Skip null padding
+        while (p < end && *p == '\0') p++;
+
+        // Read argc arguments
+        for (int i = 0; i < argc && p < end; i++) {
+            addArgument(QString::fromUtf8(p));
+            p += qstrlen(p) + 1;
+        }
+        return argc > 0;
     }
     virtual bool readCurrentDir(int aPid) {
         struct proc_vnodepathinfo vpi;
