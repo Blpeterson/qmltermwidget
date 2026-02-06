@@ -152,6 +152,8 @@ void Vt102Emulation::reset()
 #define TY_VT52(A)    TY_CONSTRUCT(8,A,0)
 #define TY_CSI_PG(A)  TY_CONSTRUCT(9,A,0)
 #define TY_CSI_PE(A)  TY_CONSTRUCT(10,A,0)
+#define TY_CSI_PL(A)  TY_CONSTRUCT(12,A,0)  // CSI with '<' prefix (ECMA-48 private param)
+#define TY_CSI_PEQ(A) TY_CONSTRUCT(13,A,0)  // CSI with '=' prefix (ECMA-48 private param)
 
 #define MAX_ARGUMENT 4096
 
@@ -250,10 +252,12 @@ void Vt102Emulation::initTokenizer()
 #define les(P,L,C) (p == (P) && s[L] < 256 && (charClass[s[(L)]] & (C)) == (C))
 #define eec(C)     (p >=  3  && cc == (C))
 #define ees(C)     (p >=  3  && cc < 256 && (charClass[cc] & (C)) == (C))
-#define eps(C)     (p >=  3  && s[2] != '?' && s[2] != '!' && s[2] != '>' && cc < 256 && (charClass[cc] & (C)) == (C))
+#define eps(C)     (p >=  3  && s[2] != '?' && s[2] != '!' && s[2] != '>' && s[2] != '<' && s[2] != '=' && cc < 256 && (charClass[cc] & (C)) == (C))
 #define epp( )     (p >=  3  && s[2] == '?')
 #define epe( )     (p >=  3  && s[2] == '!')
 #define egt( )     (p >=  3  && s[2] == '>')
+#define elt( )     (p >=  3  && s[2] == '<')
+#define eeq( )     (p >=  3  && s[2] == '=')
 #define esp( )     (p ==  4  && s[3] == ' ')
 #define Xpe        (tokenBufferPos >= 2 && tokenBuffer[1] == ']')
 #define Xte        (Xpe      && (cc ==  7 || (prevCC == 27 && cc == 92) )) // 27, 92 => "\e\\" (ST, String Terminator)
@@ -303,9 +307,11 @@ void Vt102Emulation::receiveChar(wchar_t cc)
     if (les(2,1,GRP)) { return; }
     if (Xte         ) { processWindowAttributeChange(); resetTokenizer(); return; }
     if (Xpe         ) { prevCC = cc; return; }
-    if (lec(3,2,'?')) { return; }
-    if (lec(3,2,'>')) { return; }
-    if (lec(3,2,'!')) { return; }
+    if (lec(3,2,'?')) { return; }  // CSI private parameter prefixes:
+    if (lec(3,2,'>')) { return; }  // ECMA-48 defines < = > ? (0x3C–0x3F)
+    if (lec(3,2,'!')) { return; }  // as private-use bytes in CSI sequences.
+    if (lec(3,2,'<')) { return; }  // All must be recognized so the tokenizer
+    if (lec(3,2,'=')) { return; }  // waits for the full sequence.
     if (lun(       )) { processToken( TY_CHR(), applyCharset(cc), 0);   resetTokenizer(); return; }
     if (lec(2,0,ESC)) { processToken( TY_ESC(s[1]), 0, 0);              resetTokenizer(); return; }
     if (les(3,1,SCS)) { processToken( TY_ESC_CS(s[1],s[2]), 0, 0);      resetTokenizer(); return; }
@@ -327,6 +333,8 @@ void Vt102Emulation::receiveChar(wchar_t cc)
     }
 
     if (epe(   )) { processToken( TY_CSI_PE(cc), 0, 0); resetTokenizer(); return; }
+    if (elt(   )) { processToken( TY_CSI_PL(cc), 0, 0); resetTokenizer(); return; }
+    if (eeq(   )) { processToken( TY_CSI_PEQ(cc), 0, 0); resetTokenizer(); return; }
     if (ees(DIG)) { addDigit(cc-'0'); return; }
     if (eec(';') || eec(':')) { addArgument(); return; }
     for (int i=0;i<=argc;i++)
@@ -809,6 +817,18 @@ void Vt102Emulation::processToken(int token, wchar_t p, int q)
     case TY_CSI_PR('s', 2004) :         saveMode      (MODE_BracketedPaste); break; //XTERM
     case TY_CSI_PR('r', 2004) :      restoreMode      (MODE_BracketedPaste); break; //XTERM
 
+    // Kitty keyboard protocol — not supported, but all four CSI modifiers
+    // (?, >, <, =) must be recognized so the sequences are silently consumed.
+    // Without this, unrecognized modifiers like '<' break the CSI parse and
+    // the trailing 'u' leaks to the screen as a printable character.
+    //   CSI ? Ps u   — query flags   (epp / TY_CSI_PR)
+    //   CSI > Ps u   — push flags    (egt / TY_CSI_PG)
+    //   CSI < Ps u   — pop flags     (elt / TY_CSI_PL)
+    //   CSI = Ps u   — set mode      (eeq / TY_CSI_PEQ)
+    case TY_CSI_PR('u',    0) :                                               break; //KITTY
+    case TY_CSI_PR('u',    1) :                                               break; //KITTY
+    case TY_CSI_PR('u',    2) :                                               break; //KITTY
+
     //FIXME: weird DEC reset sequence
     case TY_CSI_PE('p'      ) : /* IGNORED: reset         (        ) */ break;
 
@@ -832,6 +852,9 @@ void Vt102Emulation::processToken(int token, wchar_t p, int q)
     case TY_VT52('>'      ) :        resetMode      (MODE_AppKeyPad); break; //VT52
 
     case TY_CSI_PG('c'      ) :  reportSecondaryAttributes(          ); break; //VT100
+    case TY_CSI_PG('u'      ) :                                               break; //KITTY
+    case TY_CSI_PL('u'      ) :                                               break; //KITTY
+    case TY_CSI_PEQ('u'     ) :                                               break; //KITTY
 
     default:
         reportDecodingError();
