@@ -141,6 +141,9 @@ signals:
     void matchFound(int startColumn, int startLine, int endColumn, int endLine);
     void noMatchFound();
 
+    void bellRequest(const QString &message);
+    void activity();
+
 public slots:
     /*! Set named key binding for given widget
      */
@@ -176,7 +179,7 @@ protected slots:
 
 private slots:
     Konsole::Session* createSession(QString name);
-    //Konsole::KTerminalDisplay* createTerminalDisplay(Konsole::Session *session, QQuickItem* parent);
+    void onStateChanged(int state);
 
 private:
     //Konsole::KTerminalDisplay *m_terminalDisplay;

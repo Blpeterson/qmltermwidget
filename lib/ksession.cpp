@@ -40,6 +40,8 @@ KSession::KSession(QObject *parent) :
     connect(m_session, SIGNAL(started()), this, SIGNAL(started()));
     connect(m_session, SIGNAL(finished()), this, SLOT(sessionFinished()));
     connect(m_session, SIGNAL(titleChanged()), this, SIGNAL(titleChanged()));
+    connect(m_session, SIGNAL(bellRequest(QString)), this, SIGNAL(bellRequest(QString)));
+    connect(m_session, SIGNAL(stateChanged(int)), this, SLOT(onStateChanged(int)));
 }
 
 KSession::~KSession()
@@ -332,4 +334,11 @@ QString KSession::foregroundProcessLabel()
 QString KSession::currentDir()
 {
     return m_session->currentDir();
+}
+
+void KSession::onStateChanged(int state)
+{
+    // NOTIFYACTIVITY = 2 (defined in Emulation.h)
+    if (state == 2)
+        emit activity();
 }
