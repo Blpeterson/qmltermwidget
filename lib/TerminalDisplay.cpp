@@ -413,6 +413,7 @@ TerminalDisplay::TerminalDisplay(QQuickItem *parent)
 ,_opacity(static_cast<qreal>(1))
 ,_backgroundMode(None)
 ,_filterChain(new TerminalImageFilterChain())
+,_filePathFilter(nullptr)
 ,_cursorShape(Emulation::KeyboardCursorShape::BlockCursor)
 ,mMotionAfterPasting(NoMoveScreenWindow)
 ,_confirmMultilinePaste(false)
@@ -452,6 +453,12 @@ TerminalDisplay::TerminalDisplay(QQuickItem *parent)
   // qtermwidget: we have to hide it here due the _scrollbarLocation==NoScrollBar
   // check in TerminalDisplay::setScrollBarPosition(ScrollBarPosition position)
   _scrollBar->hide();
+
+  // add URL and file path filters to the filter chain
+  auto *urlFilter = new UrlFilter();
+  _filterChain->addFilter(urlFilter);
+  _filePathFilter = new FilePathFilter();
+  _filterChain->addFilter(_filePathFilter);
 
   // setup timers for blinking cursor and text
   _blinkTimer   = new QTimer(this);
@@ -1741,7 +1748,7 @@ void TerminalDisplay::paintFilters(QPainter& painter)
         Filter::HotSpot* spot = iter.next();
 
         QRegion region;
-        if ( spot->type() == Filter::HotSpot::Link ) {
+        if ( spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath ) {
             QRect r;
             if (spot->startLine()==spot->endLine()) {
                 r.setCoords( spot->startColumn()*_fontWidth + 1 + leftMargin,
@@ -1804,8 +1811,8 @@ void TerminalDisplay::paintFilters(QPainter& painter)
                          line*_fontHeight + 1 + _topBaseMargin,
                          endColumn*_fontWidth - 1 + leftMargin,
                          (line+1)*_fontHeight - 1 + _topBaseMargin );
-            // Underline link hotspots
-            if ( spot->type() == Filter::HotSpot::Link )
+            // Underline link and file path hotspots
+            if ( spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath )
             {
                 QFontMetrics metrics(font());
 
@@ -2292,7 +2299,7 @@ void TerminalDisplay::mousePressEvent(QMouseEvent* ev)
       }
 
       Filter::HotSpot *spot = _filterChain->hotSpotAt(charLine, charColumn);
-      if (spot && spot->type() == Filter::HotSpot::Link)
+      if (spot && (spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath))
           spot->activate(QLatin1String("click-action"));
     }
   }
@@ -2320,6 +2327,50 @@ QList<QAction*> TerminalDisplay::filterActions(const QPoint& position)
   Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine,charColumn);
 
   return spot ? spot->actions() : QList<QAction*>();
+}
+
+int TerminalDisplay::hotSpotTypeAt(int x, int y)
+{
+    int charLine, charColumn;
+    getCharacterPosition(QPointF(x, y), charLine, charColumn);
+    Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine, charColumn);
+    return spot ? static_cast<int>(spot->type()) : 0;
+}
+
+bool TerminalDisplay::activateHotSpotAt(int x, int y, const QString& action)
+{
+    int charLine, charColumn;
+    getCharacterPosition(QPointF(x, y), charLine, charColumn);
+    Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine, charColumn);
+    if (spot) {
+        spot->activate(action);
+        return true;
+    }
+    return false;
+}
+
+QString TerminalDisplay::hotSpotFilePathAt(int x, int y)
+{
+    int charLine, charColumn;
+    getCharacterPosition(QPointF(x, y), charLine, charColumn);
+    Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine, charColumn);
+    if (spot && spot->type() == Filter::HotSpot::FilePath) {
+        auto *fpSpot = static_cast<FilePathFilter::HotSpot*>(spot);
+        return QString(QLatin1String("%1:%2:%3")).arg(fpSpot->filePath()).arg(fpSpot->lineNumber()).arg(fpSpot->columnNumber());
+    }
+    return QString();
+}
+
+void TerminalDisplay::setFilePathWorkDir(const QString& dir)
+{
+    if (_filePathFilter)
+        _filePathFilter->setWorkingDirectory(dir);
+}
+
+void TerminalDisplay::setFilePathEditorCommand(const QString& cmd)
+{
+    if (_filePathFilter)
+        _filePathFilter->setEditorCommand(cmd);
 }
 
 void TerminalDisplay::hideStaleMouse() const
@@ -2383,7 +2434,7 @@ void TerminalDisplay::mouseMoveEvent(QMouseEvent* ev)
   // handle filters
   // change link hot-spot appearance on mouse-over
   Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine,charColumn);
-  if ( spot && spot->type() == Filter::HotSpot::Link)
+  if ( spot && (spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath))
   {
     QRegion previousHotspotArea = _mouseOverHotspotArea;
     _mouseOverHotspotArea = QRegion();

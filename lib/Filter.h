@@ -84,7 +84,9 @@ public:
             // this hotspot represents a clickable link
             Link,
             // this hotspot represents a marker
-            Marker
+            Marker,
+            // this hotspot represents a clickable file path
+            FilePath
        };
 
        /** Returns the line when the hotspot area starts */
@@ -292,6 +294,37 @@ private:
     static const QRegularExpression CompleteUrlRegExp;
 signals:
     void activated(const QUrl& url, bool fromContextMenu);
+};
+
+/** A filter which matches file paths in blocks of text */
+class FilePathFilter : public RegExpFilter
+{
+    Q_OBJECT
+public:
+    class HotSpot : public RegExpFilter::HotSpot
+    {
+    public:
+        HotSpot(int startLine, int startColumn, int endLine, int endColumn);
+        void activate(const QString& action = QString()) override;
+        QString filePath() const;
+        int lineNumber() const;
+        int columnNumber() const;
+        void setWorkingDirectory(const QString& dir);
+        void setEditorCommand(const QString& cmd);
+    private:
+        QString _workingDir;
+        QString _editorCommand;
+    };
+
+    FilePathFilter();
+    void setWorkingDirectory(const QString& dir);
+    void setEditorCommand(const QString& cmd);
+protected:
+    RegExpFilter::HotSpot* newHotSpot(int, int, int, int) override;
+private:
+    QString _workingDir;
+    QString _editorCommand;
+    static const QRegularExpression FilePathRegExp;
 };
 
 class FilterObject : public QObject

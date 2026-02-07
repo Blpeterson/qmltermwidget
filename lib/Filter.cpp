@@ -22,6 +22,7 @@
 
 // System
 #include <iostream>
+#include <cstdlib>
 
 // Qt
 #include <QAction>
@@ -32,6 +33,10 @@
 #include <QTextStream>
 #include <QSharedData>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QDesktopServices>
 #include <QUrl>
 
@@ -561,6 +566,153 @@ QList<QAction*> UrlFilter::HotSpot::actions()
     list << copyAction;
 
     return list;
+}
+
+// FilePathFilter implementation
+
+const QRegularExpression FilePathFilter::FilePathRegExp(
+    QLatin1String("((?:\\./|\\.\\./|/)(?:[\\w.@+-]+/)*[\\w.@+-]+\\.\\w{1,10}|(?:[\\w.@+-]+/)+[\\w.@+-]+\\.\\w{1,10})(?::(\\d+)(?::(\\d+))?)?")
+);
+
+FilePathFilter::FilePathFilter()
+{
+    setRegExp(FilePathRegExp);
+}
+
+void FilePathFilter::setWorkingDirectory(const QString& dir)
+{
+    _workingDir = dir;
+}
+
+void FilePathFilter::setEditorCommand(const QString& cmd)
+{
+    _editorCommand = cmd;
+}
+
+RegExpFilter::HotSpot* FilePathFilter::newHotSpot(int startLine, int startColumn, int endLine, int endColumn)
+{
+    auto *spot = new FilePathFilter::HotSpot(startLine, startColumn, endLine, endColumn);
+    spot->setWorkingDirectory(_workingDir);
+    spot->setEditorCommand(_editorCommand);
+    return spot;
+}
+
+FilePathFilter::HotSpot::HotSpot(int startLine, int startColumn, int endLine, int endColumn)
+    : RegExpFilter::HotSpot(startLine, startColumn, endLine, endColumn)
+{
+    setType(FilePath);
+}
+
+QString FilePathFilter::HotSpot::filePath() const
+{
+    QStringList texts = capturedTexts();
+    return texts.size() > 1 ? texts.at(1) : (texts.size() > 0 ? texts.at(0) : QString());
+}
+
+int FilePathFilter::HotSpot::lineNumber() const
+{
+    QStringList texts = capturedTexts();
+    if (texts.size() > 2 && !texts.at(2).isEmpty())
+        return texts.at(2).toInt();
+    return 1;
+}
+
+int FilePathFilter::HotSpot::columnNumber() const
+{
+    QStringList texts = capturedTexts();
+    if (texts.size() > 3 && !texts.at(3).isEmpty())
+        return texts.at(3).toInt();
+    return 1;
+}
+
+void FilePathFilter::HotSpot::setWorkingDirectory(const QString& dir)
+{
+    _workingDir = dir;
+}
+
+void FilePathFilter::HotSpot::setEditorCommand(const QString& cmd)
+{
+    _editorCommand = cmd;
+}
+
+void FilePathFilter::HotSpot::activate(const QString& action)
+{
+    QString path = filePath();
+    if (path.isEmpty())
+        return;
+
+    if (action == QLatin1String("copy-action")) {
+        QApplication::clipboard()->setText(path);
+        return;
+    }
+
+    // Resolve relative paths
+    QString resolvedPath = path;
+    if (!QDir::isAbsolutePath(path) && !_workingDir.isEmpty()) {
+        resolvedPath = QDir(_workingDir).absoluteFilePath(path);
+    }
+
+    // Check file exists
+    if (!QFile::exists(resolvedPath))
+        return;
+
+    int line = lineNumber();
+    int col = columnNumber();
+
+    // Determine editor
+    QString editor = _editorCommand;
+    if (editor.isEmpty()) {
+        QByteArray visual = qgetenv("VISUAL");
+        if (!visual.isEmpty()) {
+            editor = QString::fromUtf8(visual);
+        } else {
+            QByteArray editorEnv = qgetenv("EDITOR");
+            if (!editorEnv.isEmpty()) {
+                editor = QString::fromUtf8(editorEnv);
+            } else {
+                // Auto-detect
+                QStringList candidates = {
+                    QLatin1String("code"), QLatin1String("cursor"),
+                    QLatin1String("subl"), QLatin1String("vim"),
+                    QLatin1String("nano")
+                };
+                for (const QString& candidate : candidates) {
+                    QString found = QStandardPaths::findExecutable(candidate);
+                    if (!found.isEmpty()) {
+                        editor = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (editor.isEmpty())
+        return;
+
+    // Build arguments based on editor
+    QStringList args;
+    QString editorBase = QFileInfo(editor).baseName();
+
+    if (editorBase == QLatin1String("code") || editorBase == QLatin1String("cursor")) {
+        args << QLatin1String("--goto")
+             << QString(QLatin1String("%1:%2:%3")).arg(resolvedPath).arg(line).arg(col);
+    } else if (editorBase == QLatin1String("subl") || editorBase == QLatin1String("sublime_text")) {
+        args << QString(QLatin1String("%1:%2:%3")).arg(resolvedPath).arg(line).arg(col);
+    } else if (editorBase == QLatin1String("vim") || editorBase == QLatin1String("nvim")
+               || editorBase == QLatin1String("gvim") || editorBase == QLatin1String("mvim")) {
+        // Terminal editors — just open the file externally too
+        args << QString(QLatin1String("+%1")).arg(line) << resolvedPath;
+    } else if (editorBase == QLatin1String("emacs") || editorBase == QLatin1String("emacsclient")) {
+        args << QString(QLatin1String("+%1:%2")).arg(line).arg(col) << resolvedPath;
+    } else if (editorBase == QLatin1String("nano")) {
+        args << QString(QLatin1String("+%1")).arg(line) << resolvedPath;
+    } else {
+        // Generic fallback
+        args << resolvedPath;
+    }
+
+    QProcess::startDetached(editor, args);
 }
 
 //#include "Filter.moc"

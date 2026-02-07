@@ -482,6 +482,12 @@ public:
     void disableBracketedPasteMode(bool disable) { _disabledBracketedPasteMode = disable; }
     bool bracketedPasteModeIsDisabled() const { return _disabledBracketedPasteMode; }
 
+    Q_INVOKABLE int hotSpotTypeAt(int x, int y);
+    Q_INVOKABLE bool activateHotSpotAt(int x, int y, const QString& action = QString());
+    Q_INVOKABLE QString hotSpotFilePathAt(int x, int y);
+    Q_INVOKABLE void setFilePathWorkDir(const QString& dir);
+    Q_INVOKABLE void setFilePathEditorCommand(const QString& cmd);
+
     int mouseAutohideDelay() const { return _mouseAutohideDelay; }
 
     /**
@@ -926,6 +932,7 @@ private:
     // list of filters currently applied to the display.  used for links and
     // search highlight
     TerminalImageFilterChain* _filterChain;
+    FilePathFilter* _filePathFilter = nullptr;
     QRegion _mouseOverHotspotArea;
 
     QTermWidget::KeyboardCursorShape _cursorShape;
