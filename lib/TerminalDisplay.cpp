@@ -2450,6 +2450,12 @@ QString TerminalDisplay::resolveFilePathBoundsAt(int x, int y, int &outStartLine
     int startLimit = qMax(0, adjustedColumn - 120);
     static const QRegularExpression suffixRx(QLatin1String(":(\\d+)(?::(\\d+))?$"));
 
+    // Keep scanning backward to find the longest valid path. A shorter relative
+    // path (e.g. "Library/foo") may match before the full absolute path
+    // ("/Users/.../Library/foo") when the cursor is on a wrapped continuation line.
+    QString bestResolved;
+    int bestTrimStart = 0, bestMatchEnd = 0;
+
     for (int start = qMin(adjustedColumn, end - 1); start >= startLimit; start--) {
         QChar c = lineText.at(start);
         if (c == QLatin1Char('\t') || c == QLatin1Char('|') ||
@@ -2490,17 +2496,22 @@ QString TerminalDisplay::resolveFilePathBoundsAt(int x, int y, int &outStartLine
 
         QFileInfo fi(resolved);
         if (fi.isFile() || fi.isDir()) {
-            // Compute match bounds in terminal grid coordinates
             int trimStart = start;
             while (trimStart < end && lineText.at(trimStart) == QLatin1Char(' '))
                 trimStart++;
             int matchEnd = trimStart + candidate.length();
-            outStartLine = firstLine + trimStart / columns;
-            outStartCol = trimStart % columns;
-            outEndLine = firstLine + matchEnd / columns;
-            outEndCol = matchEnd % columns;
-            return resolved;
+            bestResolved = resolved;
+            bestTrimStart = trimStart;
+            bestMatchEnd = matchEnd;
         }
+    }
+
+    if (!bestResolved.isEmpty()) {
+        outStartLine = firstLine + bestTrimStart / columns;
+        outStartCol = bestTrimStart % columns;
+        outEndLine = firstLine + bestMatchEnd / columns;
+        outEndCol = bestMatchEnd % columns;
+        return bestResolved;
     }
 
     return QString();
