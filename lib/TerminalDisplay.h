@@ -485,12 +485,15 @@ public:
     Q_INVOKABLE int hotSpotTypeAt(int x, int y);
     Q_INVOKABLE bool activateHotSpotAt(int x, int y, const QString& action = QString());
     Q_INVOKABLE QString hotSpotFilePathAt(int x, int y);
+    Q_INVOKABLE QString hotSpotTextAt(int x, int y);
     Q_INVOKABLE void setFilePathWorkDir(const QString& dir);
     Q_INVOKABLE void setFilePathEditorCommand(const QString& cmd);
     Q_INVOKABLE bool resolveAndOpenFileAt(int x, int y);
     Q_INVOKABLE QString resolveFilePathAt(int x, int y);
     Q_INVOKABLE bool hasSelection() const;
-    Q_INVOKABLE int updateHoverHotSpot(int x, int y, bool modifierHeld);
+    Q_INVOKABLE void copyTextToClipboard(const QString& text);
+    Q_INVOKABLE QString extractPathTextAt(int x, int y);
+    Q_INVOKABLE int updateHoverHotSpot(int x, int y, bool modifierHeld, bool remoteMode = false);
     Q_INVOKABLE void clearHoverHotSpot();
 
     int mouseAutohideDelay() const { return _mouseAutohideDelay; }
@@ -943,6 +946,7 @@ private:
     bool _hoverFromSmartResolve = false;
     int _hoverStartLine = 0, _hoverStartCol = 0, _hoverEndLine = 0, _hoverEndCol = 0;
     QString resolveFilePathBoundsAt(int x, int y, int &startLine, int &startCol, int &endLine, int &endCol);
+    QString extractPathTextBoundsAt(int x, int y, int &startLine, int &startCol, int &endLine, int &endCol);
 
     QTermWidget::KeyboardCursorShape _cursorShape;
 

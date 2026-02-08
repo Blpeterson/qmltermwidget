@@ -48,8 +48,6 @@
 #include <QStyle>
 #include <QTimer>
 #include <QtDebug>
-#include <QGuiApplication>
-#include <QQuickWindow>
 #include <QUrl>
 #include <QDesktopServices>
 #include <QDrag>
@@ -1755,36 +1753,6 @@ void TerminalDisplay::paintFilters(QPainter& painter)
     {
         Filter::HotSpot* spot = iter.next();
 
-        QRegion region;
-        if ( spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath ) {
-            QRect r;
-            if (spot->startLine()==spot->endLine()) {
-                r.setCoords( spot->startColumn()*_fontWidth + 1 + leftMargin,
-                             spot->startLine()*_fontHeight + 1 + _topBaseMargin,
-                             spot->endColumn()*_fontWidth - 1 + leftMargin,
-                             (spot->endLine()+1)*_fontHeight - 1 + _topBaseMargin );
-                region |= r;
-            } else {
-                r.setCoords( spot->startColumn()*_fontWidth + 1 + leftMargin,
-                             spot->startLine()*_fontHeight + 1 + _topBaseMargin,
-                             _columns*_fontWidth - 1 + leftMargin,
-                             (spot->startLine()+1)*_fontHeight - 1 + _topBaseMargin );
-                region |= r;
-                for ( int line = spot->startLine()+1 ; line < spot->endLine() ; line++ ) {
-                    r.setCoords( 0*_fontWidth + 1 + leftMargin,
-                                 line*_fontHeight + 1 + _topBaseMargin,
-                                 _columns*_fontWidth - 1 + leftMargin,
-                                 (line+1)*_fontHeight - 1 + _topBaseMargin );
-                    region |= r;
-                }
-                r.setCoords( 0*_fontWidth + 1 + leftMargin,
-                             spot->endLine()*_fontHeight + 1 + _topBaseMargin,
-                             spot->endColumn()*_fontWidth - 1 + leftMargin,
-                             (spot->endLine()+1)*_fontHeight - 1 + _topBaseMargin );
-                region |= r;
-            }
-        }
-
         for ( int line = spot->startLine() ; line <= spot->endLine() ; line++ )
         {
             int startColumn = 0;
@@ -1819,20 +1787,9 @@ void TerminalDisplay::paintFilters(QPainter& painter)
                          line*_fontHeight + 1 + _topBaseMargin,
                          endColumn*_fontWidth - 1 + leftMargin,
                          (line+1)*_fontHeight - 1 + _topBaseMargin );
-            // Underline regex hotspots when modifier key is held (not during smart resolve)
-            if ( (spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath)
-                 && _modifierHighlight && !_hoverFromSmartResolve
-                 && _mouseOverHotspotArea.intersects(r) )
-            {
-                QFontMetrics metrics(font());
-
-                int baseline = r.bottom() - metrics.descent();
-                int underlinePos = baseline + metrics.underlinePos();
-                painter.drawLine( r.left() , underlinePos , r.right() , underlinePos );
-            }
             // Marker hotspots simply have a transparent rectanglular shape
             // drawn on top of them
-            else if ( spot->type() == Filter::HotSpot::Marker )
+            if ( spot->type() == Filter::HotSpot::Marker )
             {
             //TODO - Do not use a hardcoded colour for this
                 painter.fillRect(r,QBrush(QColor(255,0,0,120)));
@@ -1840,8 +1797,9 @@ void TerminalDisplay::paintFilters(QPainter& painter)
         }
     }
 
-    // Draw underline for smart-resolved file paths (filesystem-based detection)
-    if (_modifierHighlight && _hoverFromSmartResolve && !_mouseOverHotspotArea.isEmpty()) {
+    // Draw underline for hovered hotspots (both regex and smart-resolved)
+    // Uses per-line grid coordinates to avoid QRegion rect-merging artifacts
+    if (_modifierHighlight && !_mouseOverHotspotArea.isEmpty()) {
         QFontMetrics metrics(font());
         for (int line = _hoverStartLine; line <= _hoverEndLine; line++) {
             int startCol = (line == _hoverStartLine) ? _hoverStartCol : 0;
@@ -2380,6 +2338,19 @@ QString TerminalDisplay::hotSpotFilePathAt(int x, int y)
     return QString();
 }
 
+QString TerminalDisplay::hotSpotTextAt(int x, int y)
+{
+    int charLine, charColumn;
+    getCharacterPosition(QPointF(x, y), charLine, charColumn);
+    Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine, charColumn);
+    if (spot) {
+        auto *reSpot = dynamic_cast<RegExpFilter::HotSpot*>(spot);
+        if (reSpot && !reSpot->capturedTexts().isEmpty())
+            return reSpot->capturedTexts().first();
+    }
+    return QString();
+}
+
 void TerminalDisplay::setFilePathWorkDir(const QString& dir)
 {
     if (_filePathFilter)
@@ -2537,12 +2508,115 @@ bool TerminalDisplay::resolveAndOpenFileAt(int x, int y)
     return FilePathFilter::openInEditor(resolved);
 }
 
+QString TerminalDisplay::extractPathTextBoundsAt(int x, int y, int &outStartLine, int &outStartCol, int &outEndLine, int &outEndCol)
+{
+    outStartLine = outStartCol = outEndLine = outEndCol = 0;
+
+    if (!_screenWindow)
+        return QString();
+
+    int charLine, charColumn;
+    getCharacterPosition(QPointF(x, y), charLine, charColumn);
+
+    const Character* image = _screenWindow->getImage();
+    int columns = _screenWindow->windowColumns();
+    int totalLines = _screenWindow->windowLines();
+
+    int firstLine = charLine;
+    while (firstLine > 0 && firstLine - 1 < _lineProperties.size()
+           && (_lineProperties[firstLine - 1] & LINE_WRAPPED))
+        firstLine--;
+    int lastLine = charLine;
+    while (lastLine < totalLines - 1 && lastLine < _lineProperties.size()
+           && (_lineProperties[lastLine] & LINE_WRAPPED))
+        lastLine++;
+
+    QString lineText;
+    {
+        QTextStream stream(&lineText);
+        PlainTextDecoder decoder;
+        decoder.setTrailingWhitespace(true);
+        decoder.begin(&stream);
+        for (int ln = firstLine; ln <= lastLine; ln++)
+            decoder.decodeLine(&image[ln * columns], columns, 0);
+        decoder.end();
+    }
+
+    int adjustedColumn = charColumn + (charLine - firstLine) * columns;
+
+    while (lineText.endsWith(QLatin1Char(' ')))
+        lineText.chop(1);
+    if (lineText.isEmpty())
+        return QString();
+
+    // Without filesystem verification we must treat spaces as word boundaries,
+    // otherwise the entire line gets selected as a "path candidate".
+    // Scan forward from cursor to find end, backward to find start.
+    auto isDelimiter = [](QChar c) {
+        return c == QLatin1Char(' ') || c == QLatin1Char('\t') ||
+               c == QLatin1Char('|') || c == QLatin1Char('<') ||
+               c == QLatin1Char('>') || c == QLatin1Char(';') ||
+               c == QLatin1Char('(') || c == QLatin1Char(')');
+    };
+
+    int len = lineText.length();
+    int pos = qMin(adjustedColumn, len - 1);
+    if (pos < 0 || isDelimiter(lineText.at(pos)))
+        return QString();
+
+    int start = pos;
+    while (start > 0 && !isDelimiter(lineText.at(start - 1)))
+        start--;
+    int end = pos;
+    while (end < len - 1 && !isDelimiter(lineText.at(end + 1)))
+        end++;
+    end++; // exclusive
+
+    QString candidate = lineText.mid(start, end - start);
+    if (candidate.length() < 2)
+        return QString();
+
+    static const QRegularExpression suffixRx(QLatin1String(":(\\d+)(?::(\\d+))?$"));
+
+    bool hasDot = false;
+    {
+        QString pathOnly = candidate;
+        auto sm = suffixRx.match(candidate);
+        if (sm.hasMatch())
+            pathOnly = candidate.left(sm.capturedStart());
+        int dotPos = pathOnly.lastIndexOf(QLatin1Char('.'));
+        hasDot = (dotPos >= 1 && dotPos < pathOnly.length() - 1);
+    }
+    bool hasSlash = candidate.contains(QLatin1Char('/'));
+    if (!hasDot && !hasSlash)
+        return QString();
+
+    outStartLine = firstLine + start / columns;
+    outStartCol = start % columns;
+    outEndLine = firstLine + end / columns;
+    outEndCol = end % columns;
+    return candidate;
+}
+
+QString TerminalDisplay::extractPathTextAt(int x, int y)
+{
+    int sl, sc, el, ec;
+    return extractPathTextBoundsAt(x, y, sl, sc, el, ec);
+}
+
 bool TerminalDisplay::hasSelection() const
 {
     return _screenWindow && !_screenWindow->selectedText(false).isEmpty();
 }
 
-int TerminalDisplay::updateHoverHotSpot(int x, int y, bool modifierHeld)
+void TerminalDisplay::copyTextToClipboard(const QString& text)
+{
+    QMimeData *data = new QMimeData();
+    data->setText(text);
+    QApplication::clipboard()->setMimeData(data);
+}
+
+int TerminalDisplay::updateHoverHotSpot(int x, int y, bool modifierHeld, bool remoteMode)
 {
     QRegion previousArea = _mouseOverHotspotArea;
     _modifierHighlight = modifierHeld;
@@ -2589,35 +2663,41 @@ int TerminalDisplay::updateHoverHotSpot(int x, int y, bool modifierHeld)
     Filter::HotSpot* spot = _filterChain->hotSpotAt(charLine, charColumn);
     if (spot && (spot->type() == Filter::HotSpot::Link || spot->type() == Filter::HotSpot::FilePath)) {
         _hoverFromSmartResolve = false;
+        _hoverStartLine = spot->startLine();
+        _hoverStartCol = spot->startColumn();
+        _hoverEndLine = spot->endLine();
+        _hoverEndCol = spot->endColumn();
+        // Use a bounding rect for repaint region (underline drawn per-line in paintFilters)
         _mouseOverHotspotArea = QRegion();
-        QRect r;
-        if (spot->startLine() == spot->endLine()) {
-            r.setCoords(spot->startColumn()*_fontWidth + leftMargin,
-                        spot->startLine()*_fontHeight + _topBaseMargin,
-                        spot->endColumn()*_fontWidth + leftMargin,
-                        (spot->endLine()+1)*_fontHeight - 1 + _topBaseMargin);
-            _mouseOverHotspotArea |= r;
-        } else {
-            r.setCoords(spot->startColumn()*_fontWidth + leftMargin,
-                        spot->startLine()*_fontHeight + _topBaseMargin,
-                        _columns*_fontWidth - 1 + leftMargin,
-                        (spot->startLine()+1)*_fontHeight + _topBaseMargin);
-            _mouseOverHotspotArea |= r;
-            for (int line = spot->startLine()+1; line < spot->endLine(); line++) {
-                r.setCoords(0*_fontWidth + leftMargin,
-                            line*_fontHeight + _topBaseMargin,
-                            _columns*_fontWidth + leftMargin,
-                            (line+1)*_fontHeight + _topBaseMargin);
-                _mouseOverHotspotArea |= r;
-            }
-            r.setCoords(0*_fontWidth + leftMargin,
-                        spot->endLine()*_fontHeight + _topBaseMargin,
-                        spot->endColumn()*_fontWidth + leftMargin,
-                        (spot->endLine()+1)*_fontHeight + _topBaseMargin);
-            _mouseOverHotspotArea |= r;
-        }
+        QRect bounds;
+        bounds.setCoords(0,
+                         spot->startLine()*_fontHeight + _topBaseMargin,
+                         _columns*_fontWidth + leftMargin,
+                         (spot->endLine()+1)*_fontHeight + _topBaseMargin);
+        _mouseOverHotspotArea |= bounds;
         update(_mouseOverHotspotArea | previousArea);
         return static_cast<int>(spot->type());
+    }
+
+    // In remote mode, try non-filesystem-verified path extraction as last resort
+    if (remoteMode) {
+        QString pathText = extractPathTextBoundsAt(x, y, sl, sc, el, ec);
+        if (!pathText.isEmpty()) {
+            _hoverFromSmartResolve = true;
+            _hoverStartLine = sl;
+            _hoverStartCol = sc;
+            _hoverEndLine = el;
+            _hoverEndCol = ec;
+            _mouseOverHotspotArea = QRegion();
+            QRect bounds;
+            bounds.setCoords(0,
+                             sl*_fontHeight + _topBaseMargin,
+                             _columns*_fontWidth + leftMargin,
+                             (el+1)*_fontHeight + _topBaseMargin);
+            _mouseOverHotspotArea |= bounds;
+            update(_mouseOverHotspotArea | previousArea);
+            return static_cast<int>(Filter::HotSpot::FilePath);
+        }
     }
 
     _mouseOverHotspotArea = QRegion();
