@@ -318,7 +318,9 @@ public:
 
     FilePathFilter();
     void setWorkingDirectory(const QString& dir);
+    QString workingDirectory() const { return _workingDir; }
     void setEditorCommand(const QString& cmd);
+    static bool openInEditor(const QString& resolvedPath, int line = 1, int col = 1, const QString& editorCmd = QString());
 protected:
     RegExpFilter::HotSpot* newHotSpot(int, int, int, int) override;
 private:

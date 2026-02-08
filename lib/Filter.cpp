@@ -389,9 +389,7 @@ void RegExpFilter::process()
     auto match = _searchText.match(emptyString, 0,
         QRegularExpression::NormalMatch, QRegularExpression::AnchorAtOffsetMatchOption);
     if (match.hasMatch())
-    {
         return;
-    }
 
     match = _searchText.match(*text);
     while (match.hasMatch()) {
@@ -571,7 +569,15 @@ QList<QAction*> UrlFilter::HotSpot::actions()
 // FilePathFilter implementation
 
 const QRegularExpression FilePathFilter::FilePathRegExp(
-    QLatin1String("((?:\\./|\\.\\./|/)(?:[\\w.@+-]+/)*[\\w.@+-]+\\.\\w{1,10}|(?:[\\w.@+-]+/)+[\\w.@+-]+\\.\\w{1,10})(?::(\\d+)(?::(\\d+))?)?")
+    QLatin1String(
+        "(\"[^\"\\n]+\\.\\w{1,10}\"|"
+        "'[^'\\n]+\\.\\w{1,10}'|"
+        "(?:\\./|\\.\\./|/)(?:(?:[\\w.@+\\-\\\\ ]+)/)*[\\w.@+\\-\\\\ ]+\\.\\w{1,10}(?=[\\s:;,\"')>]|$)|"
+        "(?:(?:[\\w.@+-]+)/)+[\\w.@+-]+\\.\\w{1,10}|"
+        "(?:^|(?<=\\s))[\\w@+-][\\w.@+-]*\\.\\w{1,10})"
+        "(?::(\\d+)(?::(\\d+))?)?"
+    ),
+    QRegularExpression::MultilineOption
 );
 
 FilePathFilter::FilePathFilter()
@@ -606,7 +612,16 @@ FilePathFilter::HotSpot::HotSpot(int startLine, int startColumn, int endLine, in
 QString FilePathFilter::HotSpot::filePath() const
 {
     QStringList texts = capturedTexts();
-    return texts.size() > 1 ? texts.at(1) : (texts.size() > 0 ? texts.at(0) : QString());
+    QString path = texts.size() > 1 ? texts.at(1) : (texts.size() > 0 ? texts.at(0) : QString());
+    // Strip surrounding quotes
+    if (path.length() >= 2 &&
+        ((path.startsWith(QLatin1Char('"')) && path.endsWith(QLatin1Char('"'))) ||
+         (path.startsWith(QLatin1Char('\'')) && path.endsWith(QLatin1Char('\''))))) {
+        path = path.mid(1, path.length() - 2);
+    }
+    // Unescape backslash-space
+    path.replace(QLatin1String("\\ "), QLatin1String(" "));
+    return path;
 }
 
 int FilePathFilter::HotSpot::lineNumber() const
@@ -635,6 +650,82 @@ void FilePathFilter::HotSpot::setEditorCommand(const QString& cmd)
     _editorCommand = cmd;
 }
 
+bool FilePathFilter::openInEditor(const QString& resolvedPath, int line, int col, const QString& editorCmd)
+{
+    if (resolvedPath.isEmpty() || !QFile::exists(resolvedPath))
+        return false;
+
+    // Determine editor
+    QString editor = editorCmd;
+    if (editor.isEmpty()) {
+        // Try $VISUAL / $EDITOR first (user's explicit choice)
+        QByteArray visual = qgetenv("VISUAL");
+        if (!visual.isEmpty()) {
+            editor = QString::fromUtf8(visual);
+        } else {
+            QByteArray editorEnv = qgetenv("EDITOR");
+            if (!editorEnv.isEmpty()) {
+                editor = QString::fromUtf8(editorEnv);
+            }
+        }
+        // If env var points to a terminal editor, ignore it for detached launch
+        if (!editor.isEmpty()) {
+            QString base = QFileInfo(editor).baseName();
+            if (base == QLatin1String("vim") || base == QLatin1String("nvim")
+                || base == QLatin1String("nano") || base == QLatin1String("emacs")
+                || base == QLatin1String("vi")) {
+                editor.clear();
+            }
+        }
+        // Auto-detect GUI editors
+        if (editor.isEmpty()) {
+            struct EditorCandidate { const char *name; QStringList extraPaths; };
+            const EditorCandidate candidates[] = {
+                { "cursor", { QLatin1String("/usr/local/bin/cursor"), QLatin1String("/opt/homebrew/bin/cursor") } },
+                { "code",   { QLatin1String("/usr/local/bin/code"),   QLatin1String("/opt/homebrew/bin/code") } },
+                { "subl",   { QLatin1String("/usr/local/bin/subl"),   QLatin1String("/opt/homebrew/bin/subl") } },
+                { "gvim",   { QLatin1String("/usr/local/bin/gvim"),   QLatin1String("/opt/homebrew/bin/gvim") } },
+                { "mvim",   { QLatin1String("/usr/local/bin/mvim"),   QLatin1String("/opt/homebrew/bin/mvim") } },
+            };
+            for (const auto& c : candidates) {
+                QString found = QStandardPaths::findExecutable(QLatin1String(c.name));
+                if (!found.isEmpty()) { editor = found; break; }
+                for (const QString& path : c.extraPaths) {
+                    if (QFile::exists(path)) { editor = path; break; }
+                }
+                if (!editor.isEmpty()) break;
+            }
+        }
+    }
+
+    // Build arguments based on editor
+    if (!editor.isEmpty()) {
+        QStringList args;
+        QString editorBase = QFileInfo(editor).baseName();
+
+        if (editorBase == QLatin1String("code") || editorBase == QLatin1String("cursor")) {
+            args << QLatin1String("--goto")
+                 << QString(QLatin1String("%1:%2:%3")).arg(resolvedPath).arg(line).arg(col);
+        } else if (editorBase == QLatin1String("subl") || editorBase == QLatin1String("sublime_text")) {
+            args << QString(QLatin1String("%1:%2:%3")).arg(resolvedPath).arg(line).arg(col);
+        } else if (editorBase == QLatin1String("gvim") || editorBase == QLatin1String("mvim")) {
+            args << QString(QLatin1String("+%1")).arg(line) << resolvedPath;
+        } else if (editorBase == QLatin1String("emacsclient")) {
+            args << QString(QLatin1String("+%1:%2")).arg(line).arg(col) << resolvedPath;
+        } else {
+            args << resolvedPath;
+        }
+        return QProcess::startDetached(editor, args);
+    }
+
+    // Fallback: open with default app via macOS `open` or Linux `xdg-open`
+#if defined(Q_OS_MAC)
+    return QProcess::startDetached(QLatin1String("open"), { resolvedPath });
+#else
+    return QProcess::startDetached(QLatin1String("xdg-open"), { resolvedPath });
+#endif
+}
+
 void FilePathFilter::HotSpot::activate(const QString& action)
 {
     QString path = filePath();
@@ -652,67 +743,14 @@ void FilePathFilter::HotSpot::activate(const QString& action)
         resolvedPath = QDir(_workingDir).absoluteFilePath(path);
     }
 
-    // Check file exists
-    if (!QFile::exists(resolvedPath))
+    // Open directories in the platform file manager (Finder on macOS)
+    QFileInfo fi(resolvedPath);
+    if (fi.isDir()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(resolvedPath));
         return;
-
-    int line = lineNumber();
-    int col = columnNumber();
-
-    // Determine editor
-    QString editor = _editorCommand;
-    if (editor.isEmpty()) {
-        QByteArray visual = qgetenv("VISUAL");
-        if (!visual.isEmpty()) {
-            editor = QString::fromUtf8(visual);
-        } else {
-            QByteArray editorEnv = qgetenv("EDITOR");
-            if (!editorEnv.isEmpty()) {
-                editor = QString::fromUtf8(editorEnv);
-            } else {
-                // Auto-detect
-                QStringList candidates = {
-                    QLatin1String("code"), QLatin1String("cursor"),
-                    QLatin1String("subl"), QLatin1String("vim"),
-                    QLatin1String("nano")
-                };
-                for (const QString& candidate : candidates) {
-                    QString found = QStandardPaths::findExecutable(candidate);
-                    if (!found.isEmpty()) {
-                        editor = candidate;
-                        break;
-                    }
-                }
-            }
-        }
     }
 
-    if (editor.isEmpty())
-        return;
-
-    // Build arguments based on editor
-    QStringList args;
-    QString editorBase = QFileInfo(editor).baseName();
-
-    if (editorBase == QLatin1String("code") || editorBase == QLatin1String("cursor")) {
-        args << QLatin1String("--goto")
-             << QString(QLatin1String("%1:%2:%3")).arg(resolvedPath).arg(line).arg(col);
-    } else if (editorBase == QLatin1String("subl") || editorBase == QLatin1String("sublime_text")) {
-        args << QString(QLatin1String("%1:%2:%3")).arg(resolvedPath).arg(line).arg(col);
-    } else if (editorBase == QLatin1String("vim") || editorBase == QLatin1String("nvim")
-               || editorBase == QLatin1String("gvim") || editorBase == QLatin1String("mvim")) {
-        // Terminal editors — just open the file externally too
-        args << QString(QLatin1String("+%1")).arg(line) << resolvedPath;
-    } else if (editorBase == QLatin1String("emacs") || editorBase == QLatin1String("emacsclient")) {
-        args << QString(QLatin1String("+%1:%2")).arg(line).arg(col) << resolvedPath;
-    } else if (editorBase == QLatin1String("nano")) {
-        args << QString(QLatin1String("+%1")).arg(line) << resolvedPath;
-    } else {
-        // Generic fallback
-        args << resolvedPath;
-    }
-
-    QProcess::startDetached(editor, args);
+    FilePathFilter::openInEditor(resolvedPath, lineNumber(), columnNumber(), _editorCommand);
 }
 
 //#include "Filter.moc"

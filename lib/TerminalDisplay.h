@@ -487,6 +487,11 @@ public:
     Q_INVOKABLE QString hotSpotFilePathAt(int x, int y);
     Q_INVOKABLE void setFilePathWorkDir(const QString& dir);
     Q_INVOKABLE void setFilePathEditorCommand(const QString& cmd);
+    Q_INVOKABLE bool resolveAndOpenFileAt(int x, int y);
+    Q_INVOKABLE QString resolveFilePathAt(int x, int y);
+    Q_INVOKABLE bool hasSelection() const;
+    Q_INVOKABLE int updateHoverHotSpot(int x, int y, bool modifierHeld);
+    Q_INVOKABLE void clearHoverHotSpot();
 
     int mouseAutohideDelay() const { return _mouseAutohideDelay; }
 
@@ -934,6 +939,10 @@ private:
     TerminalImageFilterChain* _filterChain;
     FilePathFilter* _filePathFilter = nullptr;
     QRegion _mouseOverHotspotArea;
+    bool _modifierHighlight = false;
+    bool _hoverFromSmartResolve = false;
+    int _hoverStartLine = 0, _hoverStartCol = 0, _hoverEndLine = 0, _hoverEndCol = 0;
+    QString resolveFilePathBoundsAt(int x, int y, int &startLine, int &startCol, int &endLine, int &endCol);
 
     QTermWidget::KeyboardCursorShape _cursorShape;
 
