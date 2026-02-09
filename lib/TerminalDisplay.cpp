@@ -2556,7 +2556,9 @@ QString TerminalDisplay::extractPathTextBoundsAt(int x, int y, int &outStartLine
         return c == QLatin1Char(' ') || c == QLatin1Char('\t') ||
                c == QLatin1Char('|') || c == QLatin1Char('<') ||
                c == QLatin1Char('>') || c == QLatin1Char(';') ||
-               c == QLatin1Char('(') || c == QLatin1Char(')');
+               c == QLatin1Char('(') || c == QLatin1Char(')') ||
+               c == QLatin1Char('\'') || c == QLatin1Char('"') ||
+               c == QLatin1Char('`');
     };
 
     int len = lineText.length();
@@ -2573,6 +2575,10 @@ QString TerminalDisplay::extractPathTextBoundsAt(int x, int y, int &outStartLine
     end++; // exclusive
 
     QString candidate = lineText.mid(start, end - start);
+    // Strip trailing punctuation that isn't part of :line:col suffix
+    while (candidate.endsWith(QLatin1Char(':')) || candidate.endsWith(QLatin1Char(','))
+           || candidate.endsWith(QLatin1Char(';')))
+        candidate.chop(1);
     if (candidate.length() < 2)
         return QString();
 

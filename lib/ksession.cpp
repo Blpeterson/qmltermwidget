@@ -341,6 +341,11 @@ QVariantMap KSession::sshConnectionInfo()
     return m_session->sshConnectionInfo();
 }
 
+void KSession::sendTextOnceReady(const QString &text)
+{
+    m_session->sendTextOnceReady(text);
+}
+
 void KSession::onStateChanged(int state)
 {
     // NOTIFYACTIVITY = 2 (defined in Emulation.h)

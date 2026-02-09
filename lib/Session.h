@@ -353,6 +353,18 @@ public:
      */
     QVariantMap sshConnectionInfo();
 
+    /**
+     * Queues text to be sent after a shell prompt is detected in the
+     * terminal output. Used for "Open in New Pane" over SSH: opens a
+     * plain SSH connection and sends the queued text (e.g. `cd /path`)
+     * once the remote shell prompt appears. Prompt detection checks
+     * the first and last character of each line for $, #, %, or >.
+     *
+     * If Ctrl+C is pressed while waiting, the shell process is killed
+     * and the pane auto-closes.
+     */
+    void sendTextOnceReady(const QString &text);
+
     /** Returns the terminal session's window size in lines and columns. */
     QSize size();
     /**
@@ -534,6 +546,8 @@ private:
 
     void updateTerminalSize();
     bool updateForegroundProcessInfo();
+    /** Scans PTY output for shell prompt characters to trigger deferred text sending. */
+    void _checkForPrompt(const char *buf, int len);
     WId windowId() const;
 
     int            _uniqueIdentifier;
@@ -592,6 +606,12 @@ private:
     int _foregroundPid;
     static int lastSessionId;
     int ptySlaveFd;
+
+    // Prompt detection state for sendTextOnceReady()
+    QString _pendingReadyText;   // Text queued to send after prompt is detected
+    QByteArray _promptBuffer;    // Accumulates PTY output for prompt scanning
+    bool _waitingForPrompt;      // True while watching for a shell prompt
+    int _scrollPendingCount;     // Remaining onReceiveBlock calls to scroll on
 };
 
 /**

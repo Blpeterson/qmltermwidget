@@ -126,6 +126,12 @@ public:
      */
     Q_INVOKABLE QVariantMap sshConnectionInfo();
 
+    /**
+     * Queues text to be sent after a shell prompt is detected.
+     * Used for sending commands (like cd) after an SSH connection is established.
+     */
+    Q_INVOKABLE void sendTextOnceReady(const QString &text);
+
 signals:
     void started();
     void finished();

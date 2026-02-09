@@ -76,6 +76,8 @@ Session::Session(QObject* parent) :
         , _hasDarkBackground(false)
         , _foregroundProcessInfo(NULL)
         , _foregroundPid(0)
+        , _waitingForPrompt(false)
+        , _scrollPendingCount(0)
 {
     //prepare DBus communication
 //    new SessionAdaptor(this);
@@ -114,6 +116,27 @@ Session::Session(QObject* parent) :
              SLOT(onReceiveBlock(const char *,int)) );
     connect( _emulation,SIGNAL(sendData(const char *,int)),_shellProcess,
              SLOT(sendData(const char *,int)) );
+    // When Ctrl+C (0x03) is sent while waiting for a prompt (e.g. during
+    // SSH password auth in "Open in New Pane"), kill the shell process so
+    // the pane auto-closes. Views are hidden first to prevent a flash of
+    // error output. _wantedClose ensures done() emits finished().
+    connect( _emulation, &Emulation::sendData, this, [this](const char *data, int len) {
+        if (_waitingForPrompt) {
+            for (int i = 0; i < len; i++) {
+                if (data[i] == '\x03') {
+                    _waitingForPrompt = false;
+                    _promptBuffer.clear();
+                    _pendingReadyText.clear();
+                    _scrollPendingCount = 0;
+                    _wantedClose = true;
+                    for (auto *view : _views)
+                        view->setVisible(false);
+                    _shellProcess->kill();
+                    return;
+                }
+            }
+        }
+    });
     connect( _emulation,SIGNAL(lockPtyRequest(bool)),_shellProcess,SLOT(lockPty(bool)) );
     connect( _emulation,SIGNAL(useUtf8Request(bool)),_shellProcess,SLOT(setUtf8Mode(bool)) );
 
@@ -942,8 +965,80 @@ void Session::zmodemFinished()
 */
 void Session::onReceiveBlock( const char * buf, int len )
 {
+    _checkForPrompt(buf, len);
     _emulation->receiveData( buf, len );
     emit receivedData( QString::fromLatin1( buf, len ) );
+
+    // After sending deferred text (e.g. cd command after SSH login), scroll
+    // to bottom for several receive cycles so the response is visible.
+    if (_scrollPendingCount > 0) {
+        _scrollPendingCount--;
+        for (auto *view : _views)
+            view->scrollToEnd();
+    }
+}
+
+void Session::sendTextOnceReady(const QString &text)
+{
+    _pendingReadyText = text;
+    _waitingForPrompt = true;
+    _promptBuffer.clear();
+}
+
+// Scans incoming PTY data for common shell prompt characters ($, #, %, >).
+// Checks both the first and last non-whitespace character of each line to
+// handle various prompt styles (e.g. "$ ", "user@host:~$ ", "myhost% ").
+// When a prompt is detected, sends the queued text and arms scroll.
+void Session::_checkForPrompt(const char *buf, int len)
+{
+    if (!_waitingForPrompt) return;
+
+    // Append new data, keeping only the last line
+    _promptBuffer.append(buf, len);
+    int lastNl = _promptBuffer.lastIndexOf('\n');
+    if (lastNl >= 0)
+        _promptBuffer = _promptBuffer.mid(lastNl + 1);
+
+    // Strip ANSI escape sequences: ESC [ ... final_byte
+    QByteArray clean;
+    clean.reserve(_promptBuffer.size());
+    int i = 0;
+    while (i < _promptBuffer.size()) {
+        char c = _promptBuffer.at(i);
+        if (c == '\033') {
+            i++;
+            if (i < _promptBuffer.size() && _promptBuffer.at(i) == '[') {
+                i++;
+                while (i < _promptBuffer.size()) {
+                    char p = _promptBuffer.at(i);
+                    if (p >= 0x40 && p <= 0x7E) { i++; break; }
+                    i++;
+                }
+            }
+        } else if (c == '\r') {
+            // Skip carriage returns
+            i++;
+        } else {
+            clean.append(c);
+            i++;
+        }
+    }
+
+    // Trim trailing whitespace
+    QByteArray trimmed = clean.trimmed();
+    if (trimmed.isEmpty()) return;
+
+    char firstChar = trimmed.at(0);
+    char lastChar = trimmed.at(trimmed.size() - 1);
+    // Match common prompt endings: $, #, %, >
+    if (firstChar == '$' || firstChar == '#' || firstChar == '%' || firstChar == '>' ||
+        lastChar == '$' || lastChar == '#' || lastChar == '%' || lastChar == '>') {
+        _waitingForPrompt = false;
+        _promptBuffer.clear();
+        sendText(_pendingReadyText);
+        _pendingReadyText.clear();
+        _scrollPendingCount = 5;
+    }
 }
 
 QSize Session::size()
