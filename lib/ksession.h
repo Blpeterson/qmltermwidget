@@ -129,8 +129,9 @@ public:
     /**
      * Queues text to be sent after a shell prompt is detected.
      * Used for sending commands (like cd) after an SSH connection is established.
+     * @param promptChars Characters to match as prompt endings (default: "$#%>").
      */
-    Q_INVOKABLE void sendTextOnceReady(const QString &text);
+    Q_INVOKABLE void sendTextOnceReady(const QString &text, const QString &promptChars = QString());
 
 signals:
     void started();

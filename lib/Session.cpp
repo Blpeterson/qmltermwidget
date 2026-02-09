@@ -978,17 +978,30 @@ void Session::onReceiveBlock( const char * buf, int len )
     }
 }
 
-void Session::sendTextOnceReady(const QString &text)
+void Session::sendTextOnceReady(const QString &text, const QString &promptChars)
 {
     _pendingReadyText = text;
+
+    // Parse comma-separated prompt tokens (e.g. "$, #, %, >, ]").
+    // Each entry is trimmed, so "$,#,%,>" and "$, #, %, >" are equivalent.
+    // Supports multi-character tokens (e.g. "→, ❯, myhost)").
+    _promptTokens.clear();
+    QString src = promptChars.isEmpty() ? QStringLiteral("$, #, %, >") : promptChars;
+    const auto parts = src.split(QLatin1Char(','));
+    for (const auto &part : parts) {
+        QByteArray token = part.trimmed().toLatin1();
+        if (!token.isEmpty())
+            _promptTokens.append(token);
+    }
+
     _waitingForPrompt = true;
     _promptBuffer.clear();
 }
 
-// Scans incoming PTY data for common shell prompt characters ($, #, %, >).
-// Checks both the first and last non-whitespace character of each line to
-// handle various prompt styles (e.g. "$ ", "user@host:~$ ", "myhost% ").
-// When a prompt is detected, sends the queued text and arms scroll.
+// Scans incoming PTY data for shell prompt tokens (comma-separated, configurable
+// via sendTextOnceReady's promptChars parameter, default "$, #, %, >"). Checks
+// if the trimmed line starts or ends with any token to handle various prompt
+// styles. When a prompt is detected, sends the queued text and arms scroll.
 void Session::_checkForPrompt(const char *buf, int len)
 {
     if (!_waitingForPrompt) return;
@@ -1028,11 +1041,15 @@ void Session::_checkForPrompt(const char *buf, int len)
     QByteArray trimmed = clean.trimmed();
     if (trimmed.isEmpty()) return;
 
-    char firstChar = trimmed.at(0);
-    char lastChar = trimmed.at(trimmed.size() - 1);
-    // Match common prompt endings: $, #, %, >
-    if (firstChar == '$' || firstChar == '#' || firstChar == '%' || firstChar == '>' ||
-        lastChar == '$' || lastChar == '#' || lastChar == '%' || lastChar == '>') {
+    // Check if the cleaned line starts or ends with any configured prompt token
+    bool matched = false;
+    for (const auto &token : _promptTokens) {
+        if (trimmed.startsWith(token) || trimmed.endsWith(token)) {
+            matched = true;
+            break;
+        }
+    }
+    if (matched) {
         _waitingForPrompt = false;
         _promptBuffer.clear();
         sendText(_pendingReadyText);

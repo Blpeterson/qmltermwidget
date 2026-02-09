@@ -341,9 +341,9 @@ QVariantMap KSession::sshConnectionInfo()
     return m_session->sshConnectionInfo();
 }
 
-void KSession::sendTextOnceReady(const QString &text)
+void KSession::sendTextOnceReady(const QString &text, const QString &promptChars)
 {
-    m_session->sendTextOnceReady(text);
+    m_session->sendTextOnceReady(text, promptChars);
 }
 
 void KSession::onStateChanged(int state)

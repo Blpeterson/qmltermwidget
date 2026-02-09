@@ -358,12 +358,15 @@ public:
      * terminal output. Used for "Open in New Pane" over SSH: opens a
      * plain SSH connection and sends the queued text (e.g. `cd /path`)
      * once the remote shell prompt appears. Prompt detection checks
-     * the first and last character of each line for $, #, %, or >.
+     * the first and last character of each line for prompt characters.
+     *
+     * @param promptChars Characters to match as prompt endings (e.g. "$#%>").
+     *        If empty, defaults to "$#%>".
      *
      * If Ctrl+C is pressed while waiting, the shell process is killed
      * and the pane auto-closes.
      */
-    void sendTextOnceReady(const QString &text);
+    void sendTextOnceReady(const QString &text, const QString &promptChars = QString());
 
     /** Returns the terminal session's window size in lines and columns. */
     QSize size();
@@ -610,6 +613,7 @@ private:
     // Prompt detection state for sendTextOnceReady()
     QString _pendingReadyText;   // Text queued to send after prompt is detected
     QByteArray _promptBuffer;    // Accumulates PTY output for prompt scanning
+    QList<QByteArray> _promptTokens; // Tokens to match at start/end of prompt line
     bool _waitingForPrompt;      // True while watching for a shell prompt
     int _scrollPendingCount;     // Remaining onReceiveBlock calls to scroll on
 };
