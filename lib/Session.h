@@ -27,6 +27,7 @@
 
 #include <QProcess>
 #include <QStringList>
+#include <QVariant>
 
 #include "Emulation.h"
 #include "History.h"
@@ -345,6 +346,12 @@ public:
      * Returns the current working directory of the process.
      */
     QString currentDir();
+
+    /**
+     * Returns SSH connection info (host, user, port) if the foreground
+     * process is ssh. Returns an empty map otherwise.
+     */
+    QVariantMap sshConnectionInfo();
 
     /** Returns the terminal session's window size in lines and columns. */
     QSize size();

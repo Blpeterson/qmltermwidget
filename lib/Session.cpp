@@ -1014,6 +1014,22 @@ QString Session::currentDir()
     return path;
 }
 
+QVariantMap Session::sshConnectionInfo()
+{
+    QVariantMap result;
+    if (updateForegroundProcessInfo()) {
+        bool ok = false;
+        QString name = _foregroundProcessInfo->name(&ok);
+        if (ok && name == QLatin1String("ssh")) {
+            SSHProcessInfo sshInfo(*_foregroundProcessInfo);
+            result["host"] = sshInfo.host();
+            result["user"] = sshInfo.userName();
+            result["port"] = sshInfo.port();
+        }
+    }
+    return result;
+}
+
 bool Session::updateForegroundProcessInfo()
 {
     Q_ASSERT(_shellProcess);

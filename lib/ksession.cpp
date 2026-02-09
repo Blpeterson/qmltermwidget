@@ -336,6 +336,11 @@ QString KSession::currentDir()
     return m_session->currentDir();
 }
 
+QVariantMap KSession::sshConnectionInfo()
+{
+    return m_session->sshConnectionInfo();
+}
+
 void KSession::onStateChanged(int state)
 {
     // NOTIFYACTIVITY = 2 (defined in Emulation.h)
