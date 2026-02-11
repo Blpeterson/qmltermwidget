@@ -147,6 +147,14 @@ Session::Session(QObject* parent) :
     _monitorTimer = new QTimer(this);
     _monitorTimer->setSingleShot(true);
     connect(_monitorTimer, SIGNAL(timeout()), this, SLOT(monitorTimerDone()));
+
+    // Coalesce rapid size changes (e.g. during tab switch when StackLayout
+    // toggles visibility and Qt resizes the terminal in multiple steps).
+    // Only the final size after the sequence settles triggers SIGWINCH.
+    _resizeTimer = new QTimer(this);
+    _resizeTimer->setSingleShot(true);
+    _resizeTimer->setInterval(50);
+    connect(_resizeTimer, &QTimer::timeout, this, &Session::updateTerminalSize);
 }
 
 WId Session::windowId() const
@@ -502,7 +510,9 @@ void Session::activityStateSet(int state)
 
 void Session::onViewSizeChange(int /*height*/, int /*width*/)
 {
-    updateTerminalSize();
+    // Restart the coalesce timer so rapid consecutive size changes
+    // (e.g. StackLayout visibility toggle) only produce one SIGWINCH.
+    _resizeTimer->start();
 }
 void Session::onEmulationSizeChange(QSize size)
 {
@@ -522,10 +532,12 @@ void Session::updateTerminalSize()
     const int VIEW_LINES_THRESHOLD = 2;
     const int VIEW_COLUMNS_THRESHOLD = 2;
 
-    //select largest number of lines and columns that will fit in all visible views
+    // Select largest number of lines and columns that will fit in all visible views.
+    // Hidden views (e.g. background tabs) are skipped so they don't receive SIGWINCH
+    // while offscreen — they get resized when they become visible via itemChange().
     while ( viewIter.hasNext() ) {
         TerminalDisplay * view = viewIter.next();
-        if ( //!view->isVisible() == false && QMLTermWidget: We need to disable this check. It has issues when resizing invisible terminal.
+        if ( view->isVisible() &&
                 view->lines() >= VIEW_LINES_THRESHOLD &&
                 view->columns() >= VIEW_COLUMNS_THRESHOLD ) {
             minLines = (minLines == -1) ? view->lines() : qMin( minLines , view->lines() );

@@ -567,6 +567,7 @@ private:
     bool           _autoClose;
     bool           _wantedClose;
     QTimer    *    _monitorTimer;
+    QTimer    *    _resizeTimer;
 
     int            _silenceSeconds;
 

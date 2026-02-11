@@ -307,12 +307,6 @@ void TerminalDisplay::setVTFont(const QFont& f)
 {
   QFont font = f;
 
-  // Check if font is not fixed pitch and print a warning
-  if ( !QFontInfo(font).fixedPitch() )
-  {
-      qDebug() << "Using a variable-width font in the terminal.  This may cause performance degradation and display/alignment errors.";
-  }
-
   // hint that text should be drawn without anti-aliasing.
   // depending on the user's font configuration, this may not be respected
   if (!_antialiasText)
@@ -331,6 +325,12 @@ void TerminalDisplay::setVTFont(const QFont& f)
   // property, when set, doesn't allow weight changes. Since all properties (weight, stretch,
   // italic, etc) are stored in QFont independently, in almost all cases styleName is not needed.
   font.setStyleName(QString());
+
+  // Check if font is not fixed pitch and print a warning
+  if ( !QFontInfo(font).fixedPitch() )
+  {
+      qDebug() << "Using a variable-width font in the terminal.  This may cause performance degradation and display/alignment errors.";
+  }
 
   m_font = font;
   fontChange(font);
@@ -2125,26 +2125,6 @@ void TerminalDisplay::updateImageSize()
   }
 
   _resizing = false;
-}
-
-// Only emit changedContentSizeSignal on show/hide if dimensions actually changed.
-// Unconditional emission caused spurious SIGWINCH on every tab switch, making
-// full-screen apps (Claude CLI, vim, htop) visibly redraw.
-void TerminalDisplay::showEvent(QShowEvent*)
-{
-    if (_contentHeight != _lastEmittedHeight || _contentWidth != _lastEmittedWidth) {
-        _lastEmittedHeight = _contentHeight;
-        _lastEmittedWidth = _contentWidth;
-        emit changedContentSizeSignal(_contentHeight, _contentWidth);
-    }
-}
-void TerminalDisplay::hideEvent(QHideEvent*)
-{
-    if (_contentHeight != _lastEmittedHeight || _contentWidth != _lastEmittedWidth) {
-        _lastEmittedHeight = _contentHeight;
-        _lastEmittedWidth = _contentWidth;
-        emit changedContentSizeSignal(_contentHeight, _contentWidth);
-    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -4354,16 +4334,12 @@ void TerminalDisplay::itemChange(ItemChange change, const ItemChangeData & value
     switch (change) {
     case QQuickItem::ItemVisibleHasChanged:
         if (value.boolValue && _screenWindow) {
-            // Compare against the screen window's viewport size, not total line count.
-            // lineCount() includes scrollback history and would always mismatch,
-            // causing a spurious SIGWINCH on every tab switch.
-            if (this->columns() != _screenWindow->windowColumns() ||
-                this->lines() != _screenWindow->windowLines()) {
-
-                _lastEmittedHeight = _contentHeight;
-                _lastEmittedWidth = _contentWidth;
-                emit changedContentSizeSignal(_contentHeight, _contentWidth);
-            }
+            // Always notify on show — updateTerminalSize() skips hidden views,
+            // so the PTY may be out of sync. The 50ms coalesce timer and Pty's
+            // early-return guard prevent spurious SIGWINCH when sizes match.
+            _lastEmittedHeight = _contentHeight;
+            _lastEmittedWidth = _contentWidth;
+            emit changedContentSizeSignal(_contentHeight, _contentWidth);
         }
         break;
     default:

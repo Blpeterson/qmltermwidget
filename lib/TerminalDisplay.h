@@ -48,8 +48,6 @@ class QTimer;
 class QEvent;
 class QGridLayout;
 class QKeyEvent;
-class QShowEvent;
-class QHideEvent;
 class QTimerEvent;
 class QWidget;
 
@@ -697,8 +695,6 @@ signals:
 protected:
     bool event( QEvent * ) override;
 
-    void showEvent(QShowEvent*);
-    void hideEvent(QHideEvent*);
     void resizeEvent(QResizeEvent*);
 
     virtual void fontChange(const QFont &font);
