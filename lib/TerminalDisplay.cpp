@@ -2119,24 +2119,32 @@ void TerminalDisplay::updateImageSize()
   if ( _resizing )
   {
       showResizeNotification();
+    _lastEmittedHeight = _contentHeight;
+    _lastEmittedWidth = _contentWidth;
     emit changedContentSizeSignal(_contentHeight, _contentWidth); // expose resizeEvent
   }
 
   _resizing = false;
 }
 
-//showEvent and hideEvent are reimplemented here so that it appears to other classes that the
-//display has been resized when the display is hidden or shown.
-//
-//TODO: Perhaps it would be better to have separate signals for show and hide instead of using
-//the same signal as the one for a content size change
+// Only emit changedContentSizeSignal on show/hide if dimensions actually changed.
+// Unconditional emission caused spurious SIGWINCH on every tab switch, making
+// full-screen apps (Claude CLI, vim, htop) visibly redraw.
 void TerminalDisplay::showEvent(QShowEvent*)
 {
-    emit changedContentSizeSignal(_contentHeight,_contentWidth);
+    if (_contentHeight != _lastEmittedHeight || _contentWidth != _lastEmittedWidth) {
+        _lastEmittedHeight = _contentHeight;
+        _lastEmittedWidth = _contentWidth;
+        emit changedContentSizeSignal(_contentHeight, _contentWidth);
+    }
 }
 void TerminalDisplay::hideEvent(QHideEvent*)
 {
-    emit changedContentSizeSignal(_contentHeight,_contentWidth);
+    if (_contentHeight != _lastEmittedHeight || _contentWidth != _lastEmittedWidth) {
+        _lastEmittedHeight = _contentHeight;
+        _lastEmittedWidth = _contentWidth;
+        emit changedContentSizeSignal(_contentHeight, _contentWidth);
+    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -4352,6 +4360,8 @@ void TerminalDisplay::itemChange(ItemChange change, const ItemChangeData & value
             if (this->columns() != _screenWindow->windowColumns() ||
                 this->lines() != _screenWindow->windowLines()) {
 
+                _lastEmittedHeight = _contentHeight;
+                _lastEmittedWidth = _contentWidth;
                 emit changedContentSizeSignal(_contentHeight, _contentWidth);
             }
         }

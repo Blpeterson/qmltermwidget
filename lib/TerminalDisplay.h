@@ -885,6 +885,8 @@ private:
 
     int _contentHeight;
     int _contentWidth;
+    int _lastEmittedHeight = 0;  // Track last emitted size to suppress
+    int _lastEmittedWidth = 0;   // redundant SIGWINCH on tab switch
     Character* _image; // [lines][columns]
                // only the area [usedLines][usedColumns] in the image contains valid data
 
