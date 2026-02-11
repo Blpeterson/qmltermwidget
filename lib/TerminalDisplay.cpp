@@ -4346,8 +4346,11 @@ void TerminalDisplay::itemChange(ItemChange change, const ItemChangeData & value
     switch (change) {
     case QQuickItem::ItemVisibleHasChanged:
         if (value.boolValue && _screenWindow) {
-            if (this->columns() != _screenWindow->columnCount() ||
-                this->lines() != _screenWindow->lineCount()) {
+            // Compare against the screen window's viewport size, not total line count.
+            // lineCount() includes scrollback history and would always mismatch,
+            // causing a spurious SIGWINCH on every tab switch.
+            if (this->columns() != _screenWindow->windowColumns() ||
+                this->lines() != _screenWindow->windowLines()) {
 
                 emit changedContentSizeSignal(_contentHeight, _contentWidth);
             }
