@@ -43,6 +43,7 @@
 
 #include "kpty.h"
 #include "kptydevice.h"
+#include "kptyprocess.h"
 
 using namespace Konsole;
 
@@ -54,8 +55,8 @@ void Pty::setWindowSize(int lines, int cols)
   _windowColumns = cols;
   _windowLines = lines;
 
-  if (pty()->masterFd() >= 0)
-    pty()->setWinSize(lines, cols);
+  if (_process->pty()->masterFd() >= 0)
+    _process->pty()->setWinSize(lines, cols);
 }
 QSize Pty::windowSize() const
 {
@@ -66,24 +67,24 @@ void Pty::setFlowControlEnabled(bool enable)
 {
   _xonXoff = enable;
 
-  if (pty()->masterFd() >= 0)
+  if (_process->pty()->masterFd() >= 0)
   {
     struct ::termios ttmode;
-    pty()->tcGetAttr(&ttmode);
+    _process->pty()->tcGetAttr(&ttmode);
     if (!enable)
       ttmode.c_iflag &= ~(IXOFF | IXON);
     else
       ttmode.c_iflag |= (IXOFF | IXON);
-    if (!pty()->tcSetAttr(&ttmode))
+    if (!_process->pty()->tcSetAttr(&ttmode))
       qWarning() << "Unable to set terminal attributes.";
   }
 }
 bool Pty::flowControlEnabled() const
 {
-    if (pty()->masterFd() >= 0)
+    if (_process->pty()->masterFd() >= 0)
     {
         struct ::termios ttmode;
-        pty()->tcGetAttr(&ttmode);
+        _process->pty()->tcGetAttr(&ttmode);
         return ttmode.c_iflag & IXOFF &&
                ttmode.c_iflag & IXON;
     }
@@ -96,15 +97,15 @@ void Pty::setUtf8Mode(bool enable)
 #ifdef IUTF8 // XXX not a reasonable place to check it.
   _utf8 = enable;
 
-  if (pty()->masterFd() >= 0)
+  if (_process->pty()->masterFd() >= 0)
   {
     struct ::termios ttmode;
-    pty()->tcGetAttr(&ttmode);
+    _process->pty()->tcGetAttr(&ttmode);
     if (!enable)
       ttmode.c_iflag &= ~IUTF8;
     else
       ttmode.c_iflag |= IUTF8;
-    if (!pty()->tcSetAttr(&ttmode))
+    if (!_process->pty()->tcSetAttr(&ttmode))
       qWarning() << "Unable to set terminal attributes.";
   }
 #endif
@@ -114,22 +115,22 @@ void Pty::setErase(char erase)
 {
   _eraseChar = erase;
 
-  if (pty()->masterFd() >= 0)
+  if (_process->pty()->masterFd() >= 0)
   {
     struct ::termios ttmode;
-    pty()->tcGetAttr(&ttmode);
+    _process->pty()->tcGetAttr(&ttmode);
     ttmode.c_cc[VERASE] = erase;
-    if (!pty()->tcSetAttr(&ttmode))
+    if (!_process->pty()->tcSetAttr(&ttmode))
       qWarning() << "Unable to set terminal attributes.";
   }
 }
 
 char Pty::erase() const
 {
-    if (pty()->masterFd() >= 0)
+    if (_process->pty()->masterFd() >= 0)
     {
         struct ::termios ttyAttributes;
-        pty()->tcGetAttr(&ttyAttributes);
+        _process->pty()->tcGetAttr(&ttyAttributes);
         return ttyAttributes.c_cc[VERASE];
     }
 
@@ -150,7 +151,7 @@ void Pty::addEnvironmentVariables(const QStringList& environment)
             QString variable = pair.left(pos);
             QString value = pair.mid(pos+1);
 
-            setEnv(variable,value);
+            _process->setEnv(variable,value);
 
             if (variable == QLatin1String("TERM")) {
                 termEnvVarAdded = true;
@@ -159,7 +160,7 @@ void Pty::addEnvironmentVariables(const QStringList& environment)
 
     // fallback to ensure that $TERM is always set
     if (!termEnvVarAdded) {
-        setEnv(QStringLiteral("TERM"), QStringLiteral("xterm-256color"));
+        _process->setEnv(QStringLiteral("TERM"), QStringLiteral("xterm-256color"));
     }
 }
 }
@@ -167,24 +168,23 @@ void Pty::addEnvironmentVariables(const QStringList& environment)
 int Pty::start(const QString& program,
                const QStringList& programArguments,
                const QStringList& environment,
+               const QString& workingDir,
                ulong winid,
                bool addToUtmp
-               //const QString& dbusService,
-               //const QString& dbusSession
                )
 {
-  clearProgram();
+  _process->clearProgram();
 
   // For historical reasons, the first argument in programArguments is the
   // name of the program to execute, so create a list consisting of all
   // but the first argument to pass to setProgram()
   Q_ASSERT(programArguments.count() >= 1);
-  setProgram(program, programArguments.mid(1));
+  _process->setProgram(program, programArguments.mid(1));
 
   addEnvironmentVariables(environment);
 
-  setEnv(QLatin1String("WINDOWID"), QString::number(winid));
-  setEnv(QLatin1String("COLORTERM"), QLatin1String("truecolor"));
+  _process->setEnv(QLatin1String("WINDOWID"), QString::number(winid));
+  _process->setEnv(QLatin1String("COLORTERM"), QLatin1String("truecolor"));
 
   // unless the LANGUAGE environment variable has been set explicitly
   // set it to a null string
@@ -197,12 +197,13 @@ int Pty::start(const QString& program,
   // does not have a translation for
   //
   // BR:149300
-  setEnv(QLatin1String("LANGUAGE"),QString(),false /* do not overwrite existing value if any */);
+  _process->setEnv(QLatin1String("LANGUAGE"),QString(),false /* do not overwrite existing value if any */);
 
-  setUseUtmp(addToUtmp);
+  _process->setWorkingDirectory(workingDir);
+  _process->setUseUtmp(addToUtmp);
 
   struct ::termios ttmode;
-  pty()->tcGetAttr(&ttmode);
+  _process->pty()->tcGetAttr(&ttmode);
   if (!_xonXoff)
     ttmode.c_iflag &= ~(IXOFF | IXON);
   else
@@ -217,14 +218,14 @@ int Pty::start(const QString& program,
   if (_eraseChar != 0)
       ttmode.c_cc[VERASE] = _eraseChar;
 
-  if (!pty()->tcSetAttr(&ttmode))
+  if (!_process->pty()->tcSetAttr(&ttmode))
     qWarning() << "Unable to set terminal attributes.";
 
-  pty()->setWinSize(_windowLines, _windowColumns);
+  _process->pty()->setWinSize(_windowLines, _windowColumns);
 
-  KProcess::start();
+  _process->start();
 
-  if (!waitForStarted())
+  if (!_process->waitForStarted())
       return -1;
 
   return 0;
@@ -233,7 +234,7 @@ int Pty::start(const QString& program,
 void Pty::setEmptyPTYProperties()
 {
     struct ::termios ttmode;
-    pty()->tcGetAttr(&ttmode);
+    _process->pty()->tcGetAttr(&ttmode);
     if (!_xonXoff)
       ttmode.c_iflag &= ~(IXOFF | IXON);
     else
@@ -248,35 +249,37 @@ void Pty::setEmptyPTYProperties()
     if (_eraseChar != 0)
         ttmode.c_cc[VERASE] = _eraseChar;
 
-    if (!pty()->tcSetAttr(&ttmode))
+    if (!_process->pty()->tcSetAttr(&ttmode))
       qWarning() << "Unable to set terminal attributes.";
 }
 
 void Pty::setWriteable(bool writeable)
 {
   struct stat sbuf;
-  stat(pty()->ttyName(), &sbuf);
+  stat(_process->pty()->ttyName(), &sbuf);
   if (writeable)
-    chmod(pty()->ttyName(), sbuf.st_mode | S_IWGRP);
+    chmod(_process->pty()->ttyName(), sbuf.st_mode | S_IWGRP);
   else
-    chmod(pty()->ttyName(), sbuf.st_mode & ~(S_IWGRP|S_IWOTH));
+    chmod(_process->pty()->ttyName(), sbuf.st_mode & ~(S_IWGRP|S_IWOTH));
 }
 
 Pty::Pty(int masterFd, QObject* parent)
-    : KPtyProcess(masterFd,parent)
+    : PtyInterface(parent)
+    , _process(new KPtyProcess(masterFd, this))
 {
     init();
 }
 Pty::Pty(QObject* parent)
-    : KPtyProcess(parent)
+    : PtyInterface(parent)
+    , _process(new KPtyProcess(this))
 {
     init();
 }
 void Pty::init()
 {
     // Must call parent class child process modifier, as it sets file descriptors ...etc
-    auto parentChildProcModifier = KPtyProcess::childProcessModifier();
-    setChildProcessModifier([parentChildProcModifier = std::move(parentChildProcModifier)]() {
+    auto parentChildProcModifier = _process->childProcessModifier();
+    _process->setChildProcessModifier([parentChildProcModifier = std::move(parentChildProcModifier)]() {
         if (parentChildProcModifier) {
             parentChildProcModifier();
         }
@@ -300,8 +303,13 @@ void Pty::init()
   _xonXoff = true;
   _utf8 =true;
 
-  connect(pty(), SIGNAL(readyRead()) , this , SLOT(dataReceived()));
-  setPtyChannels(KPtyProcess::AllChannels);
+  connect(_process->pty(), &QIODevice::readyRead, this, &Pty::dataReceived);
+  connect(_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          this, [this](int exitCode, QProcess::ExitStatus status) {
+      emit finished(exitCode, status == QProcess::NormalExit
+          ? PtyExitStatus::NormalExit : PtyExitStatus::CrashExit);
+  });
+  _process->setPtyChannels(KPtyProcess::AllChannels);
 }
 
 Pty::~Pty()
@@ -313,7 +321,7 @@ void Pty::sendData(const char* data, int length)
   if (!length)
       return;
 
-  if (!pty()->write(data,length))
+  if (!_process->pty()->write(data,length))
   {
     qWarning() << "Pty::doSendJobs - Could not send input data to terminal process.";
     return;
@@ -322,7 +330,7 @@ void Pty::sendData(const char* data, int length)
 
 void Pty::dataReceived()
 {
-    QByteArray data = pty()->readAll();
+    QByteArray data = _process->pty()->readAll();
     if (data.isEmpty())
     {
         return;
@@ -343,7 +351,7 @@ void Pty::lockPty(bool lock)
 
 int Pty::foregroundProcessGroup() const
 {
-    const int master_fd = pty()->masterFd();
+    const int master_fd = _process->pty()->masterFd();
     if (master_fd >= 0)
     {
         int pid = tcgetpgrp(master_fd);
@@ -359,6 +367,55 @@ int Pty::foregroundProcessGroup() const
 
 void Pty::closePty()
 {
-    pty()->close();
+    _process->pty()->close();
 }
 
+qint64 Pty::processId() const
+{
+    return _process->processId();
+}
+
+bool Pty::isRunning() const
+{
+    return _process->processId() > 0 && _process->state() == QProcess::Running;
+}
+
+int Pty::slaveFd() const
+{
+    return _process->pty()->slaveFd();
+}
+
+bool Pty::sendSignal(int signal)
+{
+    if (_process->processId() <= 0) return false;
+    int result = ::kill(static_cast<pid_t>(_process->processId()), signal);
+    if (result == 0) return _process->waitForFinished(1000);
+    return false;
+}
+
+bool Pty::waitForFinished(int msecs)
+{
+    return _process->waitForFinished(msecs);
+}
+
+void Pty::kill()
+{
+    _process->kill();
+}
+
+void Pty::requestClose()
+{
+#if defined(Q_OS_MAC)
+    if (sendSignal(SIGKILL)) return;
+#else
+    if (sendSignal(SIGHUP)) return;
+#endif
+
+    qWarning() << "Process" << processId() << "did not die with signal";
+    _process->pty()->close();
+    if (_process->waitForFinished(1000)) return;
+    if (!sendSignal(SIGKILL)) {
+        qWarning() << "Process" << processId() << "did not die with SIGKILL";
+        emit finished(-1, PtyExitStatus::CrashExit);
+    }
+}

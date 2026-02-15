@@ -1,6 +1,6 @@
 TEMPLATE = lib
 TARGET = qmltermwidget
-QT += qml quick widgets
+QT += qml quick widgets network
 CONFIG += qt plugin
 DEFINES += QTERMWIDGET_LIBRARY
 
@@ -14,6 +14,7 @@ macx:DEFINES += HAVE_UTMPX _UTMPX_COMPAT HAVE_PTSNAME HAVE_UNLOCKPT HAVE_GRANTPT
 INCLUDEPATH += $$PWD/lib
 DEPENDPATH  += $$PWD/lib
 INCLUDEPATH += $$PWD/src
+INCLUDEPATH += $$PWD/../daemon
 
 HEADERS += $$PWD/src/qmltermwidget_plugin.h \
 

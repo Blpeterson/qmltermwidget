@@ -47,7 +47,9 @@ KSession::KSession(QObject *parent) :
 KSession::~KSession()
 {
     if (m_session) {
-        m_session->close();
+        // Do NOT call m_session->close() here — the PersistentPty destructor
+        // sends DETACH, allowing daemon sessions to survive for reattachment.
+        // Explicit close (DESTROY) is done via closeSession() for user actions.
         m_session->disconnect();
         delete m_session;
     }
@@ -59,9 +61,29 @@ void KSession::setTitle(QString name)
 }
 
 
+QString KSession::sessionId() const
+{
+    return m_session->daemonSessionId();
+}
+
+bool KSession::persistentSession() const
+{
+    return _persistentSession;
+}
+
+void KSession::setPersistentSession(bool persistent)
+{
+    if (_persistentSession == persistent)
+        return;
+    _persistentSession = persistent;
+    if (m_session && !m_session->isRunning()) {
+        m_session->setUsePersistentPty(persistent);
+    }
+}
+
 Konsole::Session *KSession::createSession(QString name)
 {
-    Session *session = new Session();
+    Session *session = new Session(_persistentSession);
 
     session->setTitle(Session::NameRole, name);
 
@@ -344,6 +366,19 @@ QVariantMap KSession::sshConnectionInfo()
 void KSession::sendTextOnceReady(const QString &text, const QString &promptChars)
 {
     m_session->sendTextOnceReady(text, promptChars);
+}
+
+void KSession::closeSession()
+{
+    if (m_session)
+        m_session->close();
+}
+
+int KSession::attachToSession(const QString &uuid)
+{
+    if (!m_session || m_session->isRunning())
+        return -1;
+    return m_session->attachToSession(uuid);
 }
 
 void KSession::onStateChanged(int state)

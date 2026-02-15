@@ -38,6 +38,7 @@
 #include <QRegularExpression>
 
 #include "Pty.h"
+#include "PersistentPty.h"
 //#include "kptyprocess.h"
 #include "TerminalDisplay.h"
 #include "ShellCommand.h"
@@ -51,7 +52,7 @@ using namespace Qt::Literals::StringLiterals;
 
 int Session::lastSessionId = 0;
 
-Session::Session(QObject* parent) :
+Session::Session(bool usePersistentPty, QObject* parent) :
     QObject(parent),
         _shellProcess(nullptr)
         , _emulation(nullptr)
@@ -76,6 +77,7 @@ Session::Session(QObject* parent) :
         , _hasDarkBackground(false)
         , _foregroundProcessInfo(NULL)
         , _foregroundPid(0)
+        , _usePersistentPty(usePersistentPty)
         , _waitingForPrompt(false)
         , _scrollPendingCount(0)
 {
@@ -85,8 +87,12 @@ Session::Session(QObject* parent) :
 //    QDBusConnection::sessionBus().registerObject(QLatin1String("/Sessions/")+QString::number(_sessionId), this);
 
     //create teletype for I/O with shell process
-    _shellProcess = new Pty();
-    ptySlaveFd = _shellProcess->pty()->slaveFd();
+    if (_usePersistentPty) {
+        _shellProcess = new PersistentPty(this);
+    } else {
+        _shellProcess = new Pty();
+    }
+    ptySlaveFd = _shellProcess->slaveFd();
 
     //create emulation backend
     _emulation = new Vt102Emulation();
@@ -112,15 +118,31 @@ Session::Session(QObject* parent) :
     //connect teletype to emulation backend
     _shellProcess->setUtf8Mode(true);
 
-    connect( _shellProcess,SIGNAL(receivedData(const char *,int)),this,
-             SLOT(onReceiveBlock(const char *,int)) );
-    connect( _emulation,SIGNAL(sendData(const char *,int)),_shellProcess,
-             SLOT(sendData(const char *,int)) );
+    _connectPtySignals();
+
+    //setup timer for monitoring session activity
+    _monitorTimer = new QTimer(this);
+    _monitorTimer->setSingleShot(true);
+    connect(_monitorTimer, SIGNAL(timeout()), this, SLOT(monitorTimerDone()));
+
+    // Coalesce rapid size changes (e.g. during tab switch when StackLayout
+    // toggles visibility and Qt resizes the terminal in multiple steps).
+    // Only the final size after the sequence settles triggers SIGWINCH.
+    _resizeTimer = new QTimer(this);
+    _resizeTimer->setSingleShot(true);
+    _resizeTimer->setInterval(50);
+    connect(_resizeTimer, &QTimer::timeout, this, &Session::updateTerminalSize);
+}
+
+void Session::_connectPtySignals()
+{
+    connect(_shellProcess, &PtyInterface::receivedData, this, &Session::onReceiveBlock);
+    connect(_emulation, &Emulation::sendData, _shellProcess, &PtyInterface::sendData);
     // When Ctrl+C (0x03) is sent while waiting for a prompt (e.g. during
     // SSH password auth in "Open in New Pane"), kill the shell process so
     // the pane auto-closes. Views are hidden first to prevent a flash of
     // error output. _wantedClose ensures done() emits finished().
-    connect( _emulation, &Emulation::sendData, this, [this](const char *data, int len) {
+    connect(_emulation, &Emulation::sendData, this, [this](const char *data, int len) {
         if (_waitingForPrompt) {
             for (int i = 0; i < len; i++) {
                 if (data[i] == '\x03') {
@@ -137,24 +159,9 @@ Session::Session(QObject* parent) :
             }
         }
     });
-    connect( _emulation,SIGNAL(lockPtyRequest(bool)),_shellProcess,SLOT(lockPty(bool)) );
-    connect( _emulation,SIGNAL(useUtf8Request(bool)),_shellProcess,SLOT(setUtf8Mode(bool)) );
-
-    connect( _shellProcess,SIGNAL(finished(int,QProcess::ExitStatus)), this, SLOT(done(int,QProcess::ExitStatus)) );
-    // not in kprocess anymore connect( _shellProcess,SIGNAL(done(int)), this, SLOT(done(int)) );
-
-    //setup timer for monitoring session activity
-    _monitorTimer = new QTimer(this);
-    _monitorTimer->setSingleShot(true);
-    connect(_monitorTimer, SIGNAL(timeout()), this, SLOT(monitorTimerDone()));
-
-    // Coalesce rapid size changes (e.g. during tab switch when StackLayout
-    // toggles visibility and Qt resizes the terminal in multiple steps).
-    // Only the final size after the sequence settles triggers SIGWINCH.
-    _resizeTimer = new QTimer(this);
-    _resizeTimer->setSingleShot(true);
-    _resizeTimer->setInterval(50);
-    connect(_resizeTimer, &QTimer::timeout, this, &Session::updateTerminalSize);
+    connect(_emulation, &Emulation::lockPtyRequest, _shellProcess, &PtyInterface::lockPty);
+    connect(_emulation, &Emulation::useUtf8Request, _shellProcess, &PtyInterface::setUtf8Mode);
+    connect(_shellProcess, &PtyInterface::finished, this, &Session::done);
 }
 
 WId Session::windowId() const
@@ -176,7 +183,7 @@ bool Session::hasDarkBackground() const
 }
 bool Session::isRunning() const
 {
-    return (_shellProcess != nullptr && _shellProcess->state() == QProcess::Running);
+    return (_shellProcess != nullptr && _shellProcess->isRunning());
 }
 
 void Session::setProgram(const QString & program)
@@ -266,8 +273,11 @@ void Session::removeView(TerminalDisplay * widget)
         disconnect( _emulation , nullptr , widget , nullptr);
     }
 
-    // close the session automatically when the last view is removed
-    if ( _views.count() == 0 ) {
+    // For PersistentPty sessions, do NOT auto-close when views are removed.
+    // During app shutdown, views are destroyed before sessions, and calling
+    // close() here would send DESTROY, killing the daemon session.
+    // For local Pty sessions, the session will be cleaned up by the destructor.
+    if ( _views.count() == 0 && !_usePersistentPty ) {
         close();
     }
 }
@@ -313,12 +323,7 @@ void Session::run()
     if (argsTmp.length())
         arguments << _arguments;
 
-    QString cwd = QDir::currentPath();
-    if (!_initialWorkingDir.isEmpty()) {
-        _shellProcess->setWorkingDirectory(_initialWorkingDir);
-    } else {
-        _shellProcess->setWorkingDirectory(cwd);
-    }
+    QString workDir = _initialWorkingDir.isEmpty() ? QDir::currentPath() : _initialWorkingDir;
 
     _shellProcess->setFlowControlEnabled(_flowControl);
     _shellProcess->setErase(_emulation->eraseChar());
@@ -336,8 +341,30 @@ void Session::run()
     int result = _shellProcess->start(exec,
                                       arguments,
                                       _environment << backgroundColorHint,
+                                      workDir,
                                       windowId(),
                                       _addToUtmp);
+
+    // Graceful degradation: if PersistentPty fails (daemon unreachable),
+    // fall back to a local Pty so the terminal still works.
+    if (result < 0 && dynamic_cast<PersistentPty *>(_shellProcess)) {
+        qWarning() << "PersistentPty failed, falling back to local Pty";
+        _shellProcess->disconnect(this);
+        _emulation->disconnect(_shellProcess);
+        delete _shellProcess;
+
+        _shellProcess = new Pty();
+        ptySlaveFd = _shellProcess->slaveFd();
+        _shellProcess->setUtf8Mode(true);
+        _connectPtySignals();
+
+        _shellProcess->setFlowControlEnabled(_flowControl);
+        _shellProcess->setErase(_emulation->eraseChar());
+
+        result = _shellProcess->start(exec, arguments,
+                                      _environment << backgroundColorHint,
+                                      workDir, windowId(), _addToUtmp);
+    }
 
     if (result < 0) {
         qDebug() << "CRASHED! result: " << result;
@@ -575,21 +602,7 @@ void Session::refresh()
 
 bool Session::sendSignal(int signal)
 {
-    if (processId() <= 0)
-    {
-        return false;
-    }
-
-    int result = ::kill(static_cast<pid_t>(_shellProcess->processId()), signal);
-
-     if ( result == 0 )
-     {
-         return _shellProcess->waitForFinished(1000);
-     }
-     else
-     {
-         return false;
-     }
+    return _shellProcess->sendSignal(signal);
 }
 
 void Session::close()
@@ -599,31 +612,7 @@ void Session::close()
 
     if (isRunning())
     {
-#if defined(Q_OS_MAC)
-        // On macOS, jump straight to SIGKILL to avoid hangs.
-        if (sendSignal(SIGKILL))
-        {
-            return;
-        }
-#else
-        // Try SIGHUP, and if unsuccessful, do a hard kill.
-        // This is the sequence used by most other terminal emulators like xterm, gnome-terminal, ...
-        if (sendSignal(SIGHUP))
-        {
-            return;
-        }
-#endif
-        qWarning() << "Process " << processId() << " did not die with SIGHUP";
-        _shellProcess->closePty();
-        if (!_shellProcess->waitForFinished(1000))
-        {
-            if (!sendSignal(SIGKILL))
-            {
-                qWarning() << "Process " << processId() << " did not die with SIGKILL";
-                // Forced close.
-                QTimer::singleShot(1, this, SIGNAL(finished()));
-            }
-        }
+        _shellProcess->requestClose();
     }
     else
     {
@@ -644,10 +633,19 @@ void Session::sendKeyEvent(QKeyEvent* e) const
 
 Session::~Session()
 {
-    close();
+    if (_shellProcess) {
+        if (_usePersistentPty) {
+            // PersistentPty: skip close() — destructor sends DETACH, allowing
+            // daemon sessions to survive for reattachment.
+            _shellProcess->disconnect();
+        } else {
+            // Regular Pty: must close() to terminate the process before
+            // QProcess::~QProcess() runs (avoids signal-during-destruction crash).
+            close();
+        }
+    }
     delete _emulation;
     delete _shellProcess;
-//  delete _zmodemProc;
 }
 
 void Session::setProfileKey(const QString & key)
@@ -660,7 +658,7 @@ QString Session::profileKey() const
     return _profileKey;
 }
 
-void Session::done(int exitCode, QProcess::ExitStatus exitStatus)
+void Session::done(int exitCode, PtyExitStatus exitStatus)
 {
     if (!_autoClose) {
         _userTitle = QString::fromLatin1("This session is done. Finished");
@@ -675,14 +673,14 @@ void Session::done(int exitCode, QProcess::ExitStatus exitStatus)
     QString message;
     if (!_wantedClose || exitCode != 0) {
 
-        if (_shellProcess->exitStatus() == QProcess::NormalExit) {
+        if (exitStatus == PtyExitStatus::NormalExit) {
             message = tr("Session '%1' exited with code %2.").arg(_nameTitle).arg(exitCode);
         } else {
             message = tr("Session '%1' crashed.").arg(_nameTitle);
         }
     }
 
-    if ( !_wantedClose && exitStatus != QProcess::NormalExit )
+    if ( !_wantedClose && exitStatus != PtyExitStatus::NormalExit )
         message = tr("Session '%1' exited unexpectedly.").arg(_nameTitle);
     else
         emit finished();
@@ -862,119 +860,7 @@ bool Session::flowControlEnabled() const
 {
     return _flowControl;
 }
-//void Session::fireZModemDetected()
-//{
-//  if (!_zmodemBusy)
-//  {
-//    QTimer::singleShot(10, this, SIGNAL(zmodemDetected()));
-//    _zmodemBusy = true;
-//  }
-//}
 
-//void Session::cancelZModem()
-//{
-//  _shellProcess->sendData("\030\030\030\030", 4); // Abort
-//  _zmodemBusy = false;
-//}
-
-//void Session::startZModem(const QString &zmodem, const QString &dir, const QStringList &list)
-//{
-//  _zmodemBusy = true;
-//  _zmodemProc = new KProcess();
-//  _zmodemProc->setOutputChannelMode( KProcess::SeparateChannels );
-//
-//  *_zmodemProc << zmodem << "-v" << list;
-//
-//  if (!dir.isEmpty())
-//     _zmodemProc->setWorkingDirectory(dir);
-//
-//  _zmodemProc->start();
-//
-//  connect(_zmodemProc,SIGNAL (readyReadStandardOutput()),
-//          this, SLOT(zmodemReadAndSendBlock()));
-//  connect(_zmodemProc,SIGNAL (readyReadStandardError()),
-//          this, SLOT(zmodemReadStatus()));
-//  connect(_zmodemProc,SIGNAL (finished(int,QProcess::ExitStatus)),
-//          this, SLOT(zmodemFinished()));
-//
-//  disconnect( _shellProcess,SIGNAL(block_in(const char*,int)), this, SLOT(onReceiveBlock(const char*,int)) );
-//  connect( _shellProcess,SIGNAL(block_in(const char*,int)), this, SLOT(zmodemRcvBlock(const char*,int)) );
-//
-//  _zmodemProgress = new ZModemDialog(QApplication::activeWindow(), false,
-//                                    i18n("ZModem Progress"));
-//
-//  connect(_zmodemProgress, SIGNAL(user1Clicked()),
-//          this, SLOT(zmodemDone()));
-//
-//  _zmodemProgress->show();
-//}
-
-/*void Session::zmodemReadAndSendBlock()
-{
-  _zmodemProc->setReadChannel( QProcess::StandardOutput );
-  QByteArray data = _zmodemProc->readAll();
-
-  if ( data.count() == 0 )
-      return;
-
-  _shellProcess->sendData(data.constData(),data.count());
-}
-*/
-/*
-void Session::zmodemReadStatus()
-{
-  _zmodemProc->setReadChannel( QProcess::StandardError );
-  QByteArray msg = _zmodemProc->readAll();
-  while(!msg.isEmpty())
-  {
-     int i = msg.indexOf('\015');
-     int j = msg.indexOf('\012');
-     QByteArray txt;
-     if ((i != -1) && ((j == -1) || (i < j)))
-     {
-       msg = msg.mid(i+1);
-     }
-     else if (j != -1)
-     {
-       txt = msg.left(j);
-       msg = msg.mid(j+1);
-     }
-     else
-     {
-       txt = msg;
-       msg.truncate(0);
-     }
-     if (!txt.isEmpty())
-       _zmodemProgress->addProgressText(QString::fromLocal8Bit(txt));
-  }
-}
-*/
-/*
-void Session::zmodemRcvBlock(const char *data, int len)
-{
-  QByteArray ba( data, len );
-
-  _zmodemProc->write( ba );
-}
-*/
-/*
-void Session::zmodemFinished()
-{
-  if (_zmodemProc)
-  {
-    delete _zmodemProc;
-    _zmodemProc = 0;
-    _zmodemBusy = false;
-
-    disconnect( _shellProcess,SIGNAL(block_in(const char*,int)), this ,SLOT(zmodemRcvBlock(const char*,int)) );
-    connect( _shellProcess,SIGNAL(block_in(const char*,int)), this, SLOT(onReceiveBlock(const char*,int)) );
-
-    _shellProcess->sendData("\030\030\030\030", 4); // Abort
-    _shellProcess->sendData("\001\013\n", 3); // Try to get prompt back
-    _zmodemProgress->transferDone();
-  }
-}
-*/
 void Session::onReceiveBlock( const char * buf, int len )
 {
     _checkForPrompt(buf, len);
@@ -1181,6 +1067,59 @@ int Session::processId() const
 int Session::getPtySlaveFd() const
 {
     return ptySlaveFd;
+}
+
+void Session::setUsePersistentPty(bool persistent)
+{
+    if (_usePersistentPty == persistent)
+        return;
+    if (isRunning())
+        return;
+
+    _usePersistentPty = persistent;
+
+    // Disconnect old Pty signals and destroy it
+    _shellProcess->disconnect(this);
+    _emulation->disconnect(_shellProcess);
+    delete _shellProcess;
+
+    // Create new Pty of the requested type
+    if (persistent) {
+        _shellProcess = new PersistentPty(this);
+    } else {
+        _shellProcess = new Pty();
+    }
+    ptySlaveFd = _shellProcess->slaveFd();
+    _shellProcess->setUtf8Mode(true);
+    _connectPtySignals();
+}
+
+QString Session::daemonSessionId() const
+{
+    auto *ppty = dynamic_cast<PersistentPty *>(_shellProcess);
+    if (ppty)
+        return QString::fromLatin1(ppty->sessionId());
+    return QString();
+}
+
+int Session::attachToSession(const QString &sessionId)
+{
+    auto *ppty = dynamic_cast<PersistentPty *>(_shellProcess);
+    if (!ppty)
+        return -1;
+
+    int result = ppty->attachToSession(sessionId.toLatin1());
+    if (result < 0)
+        return result;
+
+    // Sync terminal size to match current emulation dimensions
+    if (_emulation) {
+        QSize sz = ppty->windowSize();
+        _emulation->setImageSize(sz.height(), sz.width());
+    }
+
+    emit started();
+    return 0;
 }
 
 SessionGroup::SessionGroup()

@@ -46,10 +46,16 @@ class KSession : public QObject
     Q_PROPERTY(QString foregroundProcessName READ foregroundProcessName)
     Q_PROPERTY(QString foregroundProcessLabel READ foregroundProcessLabel)
     Q_PROPERTY(QString currentDir READ currentDir)
+    Q_PROPERTY(QString sessionId READ sessionId NOTIFY sessionIdChanged)
+    Q_PROPERTY(bool persistentSession READ persistentSession WRITE setPersistentSession)
 
 public:
     KSession(QObject *parent = 0);
     ~KSession();
+
+    QString sessionId() const;
+    bool persistentSession() const;
+    void setPersistentSession(bool persistent);
 
 public:
     //bool setup();
@@ -127,6 +133,18 @@ public:
     Q_INVOKABLE QVariantMap sshConnectionInfo();
 
     /**
+     * Explicitly closes (DESTROY) the daemon session.
+     * Used for user-initiated close actions (Cmd+W) where the shell should die.
+     */
+    Q_INVOKABLE void closeSession();
+
+    /**
+     * Attaches to an existing daemon session by UUID.
+     * Returns 0 on success, -1 on failure.
+     */
+    Q_INVOKABLE int attachToSession(const QString &uuid);
+
+    /**
      * Queues text to be sent after a shell prompt is detected.
      * Used for sending commands (like cd) after an SSH connection is established.
      * @param promptChars Characters to match as prompt endings (default: "$#%>").
@@ -150,6 +168,8 @@ signals:
     void historySizeChanged();
 
     void initialWorkingDirectoryChanged();
+
+    void sessionIdChanged();
 
     void matchFound(int startColumn, int startLine, int endColumn, int endLine);
     void noMatchFound();
@@ -200,6 +220,7 @@ private:
     QString m_shellProgram;
     QStringList m_shellArgs;
     Konsole::Session *m_session;
+    bool _persistentSession = false;
 
 };
 

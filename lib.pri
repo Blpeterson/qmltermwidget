@@ -17,7 +17,10 @@ HEADERS += $$PWD/lib/BlockArray.h \
     $$PWD/lib/kpty_p.h \
     $$PWD/lib/kptyprocess.h \
     $$PWD/lib/LineFont.h \
+    $$PWD/lib/PtyInterface.h \
     $$PWD/lib/Pty.h \
+    $$PWD/lib/PersistentPty.h \
+    $$PWD/lib/DaemonClient.h \
     $$PWD/lib/ProcessInfo.h \
     $$PWD/lib/Screen.h \
     $$PWD/lib/ScreenWindow.h \
@@ -46,6 +49,8 @@ SOURCES += $$PWD/lib/BlockArray.cpp \
     $$PWD/lib/kptyprocess.cpp \
     $$PWD/lib/ProcessInfo.cpp \
     $$PWD/lib/Pty.cpp \
+    $$PWD/lib/PersistentPty.cpp \
+    $$PWD/lib/DaemonClient.cpp \
     #$$PWD/lib/qtermwidget.cpp \
     $$PWD/lib/Screen.cpp \
     $$PWD/lib/ScreenWindow.cpp \

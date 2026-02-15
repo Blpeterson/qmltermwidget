@@ -25,22 +25,19 @@
 #ifndef SESSION_H
 #define SESSION_H
 
-#include <QProcess>
 #include <QStringList>
 #include <QVariant>
 
+#include "PtyInterface.h"
 #include "Emulation.h"
 #include "History.h"
 #include "ProcessInfo.h"
 
-class KProcess;
-
 namespace Konsole {
 
 class Emulation;
-class Pty;
+class PtyInterface;
 class TerminalDisplay;
-//class ZModemDialog;
 
 /**
  * Represents a terminal session consisting of a pseudo-teletype and a terminal emulation.
@@ -72,8 +69,10 @@ public:
      * If no program or arguments are specified explicitly, the Session
      * falls back to using the program specified in the SHELL environment
      * variable.
+     *
+     * @param usePersistentPty If true, uses PersistentPty (daemon-backed) instead of local Pty.
      */
-    Session(QObject* parent = nullptr);
+    Session(bool usePersistentPty = false, QObject* parent = nullptr);
     ~Session() override;
 
     /**
@@ -400,16 +399,30 @@ public:
      */
     void refresh();
 
-//  void startZModem(const QString &rz, const QString &dir, const QStringList &list);
-//  void cancelZModem();
-//  bool isZModemBusy() { return _zmodemBusy; }
-
     /**
      * Returns a pty slave file descriptor.
      * This can be used for display and control
      * a remote terminal.
      */
     int getPtySlaveFd() const;
+
+    /**
+     * Returns the daemon session UUID if using PersistentPty, empty string otherwise.
+     */
+    QString daemonSessionId() const;
+
+    /**
+     * Switches the session's Pty backend before run() is called.
+     * Must be called before startShellProgram(). If the session is already
+     * running, this has no effect.
+     */
+    void setUsePersistentPty(bool persistent);
+
+    /**
+     * Attaches to an existing daemon session by UUID.
+     * Returns 0 on success, negative on failure.
+     */
+    int attachToSession(const QString &sessionId);
 
 public slots:
 
@@ -490,9 +503,6 @@ signals:
     /** TODO: Document me. */
     void openUrlRequest(const QString & url);
 
-    /** TODO: Document me. */
-//  void zmodemDetected();
-
     /**
      * Emitted when the terminal process requests a change
      * in the size of the terminal window.
@@ -525,9 +535,7 @@ signals:
     void activity();
 
 private slots:
-    void done(int, QProcess::ExitStatus );
-
-//  void fireZModemDetected();
+    void done(int exitCode, PtyExitStatus exitStatus);
 
     void onReceiveBlock( const char * buffer, int len );
     void monitorTimerDone();
@@ -540,22 +548,19 @@ private slots:
     //automatically detach views from sessions when view is destroyed
     void viewDestroyed(QObject * view);
 
-//  void zmodemReadStatus();
-//  void zmodemReadAndSendBlock();
-//  void zmodemRcvBlock(const char *data, int len);
-//  void zmodemFinished();
-
 private:
 
     void updateTerminalSize();
     bool updateForegroundProcessInfo();
     /** Scans PTY output for shell prompt characters to trigger deferred text sending. */
     void _checkForPrompt(const char *buf, int len);
+    /** Reconnects all PtyInterface signals after pty replacement (graceful degradation). */
+    void _connectPtySignals();
     WId windowId() const;
 
     int            _uniqueIdentifier;
 
-    Pty     *_shellProcess;
+    PtyInterface  *_shellProcess;
     Emulation  *  _emulation;
 
     QList<TerminalDisplay *> _views;
@@ -593,11 +598,6 @@ private:
 
     QString        _initialWorkingDir;
 
-    // ZModem
-//  bool           _zmodemBusy;
-//  KProcess*      _zmodemProc;
-//  ZModemDialog*  _zmodemProgress;
-
     // Color/Font Changes by ESC Sequences
 
     QColor         _modifiedBackground; // as set by: echo -en '\033]11;Color\007
@@ -610,6 +610,8 @@ private:
     int _foregroundPid;
     static int lastSessionId;
     int ptySlaveFd;
+
+    bool _usePersistentPty;
 
     // Prompt detection state for sendTextOnceReady()
     QString _pendingReadyText;   // Text queued to send after prompt is detected
