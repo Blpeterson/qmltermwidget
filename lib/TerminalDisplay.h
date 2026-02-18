@@ -596,6 +596,9 @@ public slots:
     void setBracketedPasteMode(bool bracketedPasteMode);
     bool bracketedPasteMode() const;
 
+    void setAlternateScreen(bool alternateScreen);
+    bool alternateScreen() const;
+
     /**
      * Shows a notification that a bell event has occurred in the terminal.
      * TODO: More documentation here
@@ -899,6 +902,16 @@ private:
     bool _mouseMarks;
     bool _bracketedPasteMode;
     bool _disabledBracketedPasteMode;
+
+    bool _alternateScreen = false;
+
+    // Keyboard text selection (Shift+Arrow, normal screen only).
+    // _kbSelLeftLimit: leftmost selectable column on the anchor line,
+    // detected by scanning for prompt-ending chars ($, %, #, >, ]).
+    bool    _kbSelActive = false;
+    QPoint  _kbSelAnchor;
+    QPoint  _kbSelEnd;
+    int     _kbSelLeftLimit = 0;
 
     QPoint  _iPntSel; // initial selection point
     QPoint  _pntSel; // current selection point

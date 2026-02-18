@@ -224,6 +224,11 @@ void Session::addView(TerminalDisplay * widget)
 
         widget->setBracketedPasteMode(_emulation->programBracketedPasteMode());
 
+        connect( _emulation , SIGNAL(programAlternateScreenChanged(bool)) ,
+                 widget , SLOT(setAlternateScreen(bool)) );
+
+        widget->setAlternateScreen(_emulation->programAlternateScreen());
+
         widget->setScreenWindow(_emulation->createWindow());
     }
 

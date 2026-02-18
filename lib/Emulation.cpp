@@ -54,6 +54,7 @@ Emulation::Emulation() :
   _keyTranslator(nullptr),
   _usesMouse(false),
   _bracketedPasteMode(false),
+  _alternateScreen(false),
   _toUtf16(QStringConverter::Utf8)
 {
   // create screens with a default size
@@ -69,6 +70,8 @@ Emulation::Emulation() :
           this, &Konsole::Emulation::usesMouseChanged);
   connect(this, &Konsole::Emulation::programBracketedPasteModeChanged,
           this, &Konsole::Emulation::bracketedPasteModeChanged);
+  connect(this, &Konsole::Emulation::programAlternateScreenChanged,
+          this, &Konsole::Emulation::alternateScreenChanged);
 
   connect(this, &Emulation::cursorChanged, this, [this] (KeyboardCursorShape cursorShape, bool blinkingCursorEnabled) {
     emit titleChanged( 50, QString(QLatin1String("CursorShape=%1;BlinkingCursorEnabled=%2"))
@@ -94,6 +97,16 @@ bool Emulation::programBracketedPasteMode() const
 void Emulation::bracketedPasteModeChanged(bool bracketedPasteMode)
 {
     _bracketedPasteMode = bracketedPasteMode;
+}
+
+bool Emulation::programAlternateScreen() const
+{
+    return _alternateScreen;
+}
+
+void Emulation::alternateScreenChanged(bool alternateScreen)
+{
+    _alternateScreen = alternateScreen;
 }
 
 ScreenWindow* Emulation::createWindow()

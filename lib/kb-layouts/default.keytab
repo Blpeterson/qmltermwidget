@@ -67,6 +67,8 @@ key Down  -Shift+AnyMod+Ansi           : "\E[1;*B"
 key Right -Shift+AnyMod+Ansi           : "\E[1;*C"
 key Left  -Shift+AnyMod+Ansi           : "\E[1;*D"
 
+# In alternate screen (vim, less), Shift+Arrow sends escape sequences to the app.
+# In normal screen, Shift+Arrow is handled as text selection in keyPressEvent().
 key Up    +Shift+AppScreen             : "\E[1;*A"
 key Down  +Shift+AppScreen             : "\E[1;*B"
 key Left  +Shift+AppScreen             : "\E[1;*D"
@@ -175,10 +177,12 @@ key Space +Control : "\x00"
 # Some keys are used by konsole to cause operations.
 # The scroll* operations refer to the history buffer.
 
-key Up      +Shift-AppScreen : scrollLineUp
+# Shift+Up/Down now handled as text selection in TerminalDisplay::keyPressEvent()
+# Scrolling moved to Option+Up/Down
+# key Up      +Shift-AppScreen : scrollLineUp
 key PgUp    +Shift-AppScreen : scrollPageUp
 key Home    +Shift-AppScreen : scrollUpToTop
-key Down    +Shift-AppScreen : scrollLineDown
+# key Down    +Shift-AppScreen : scrollLineDown
 key PgDown  +Shift-AppScreen : scrollPageDown
 key End     +Shift-AppScreen : scrollDownToBottom
 

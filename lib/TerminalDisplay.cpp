@@ -2215,6 +2215,12 @@ void TerminalDisplay::mousePressEvent(QMouseEvent* ev)
 
   if ( !_screenWindow ) return;
 
+  // Clear keyboard selection on any mouse click
+  if (_kbSelActive) {
+      _kbSelActive = false;
+      _screenWindow->clearSelection();
+  }
+
   int charLine;
   int charColumn;
   getCharacterPosition(ev->pos(),charLine,charColumn);
@@ -3449,6 +3455,22 @@ bool TerminalDisplay::bracketedPasteMode() const
     return _bracketedPasteMode;
 }
 
+void TerminalDisplay::setAlternateScreen(bool on)
+{
+    _alternateScreen = on;
+    // Clear keyboard selection when switching screens
+    if (_kbSelActive) {
+        _kbSelActive = false;
+        if (_screenWindow)
+            _screenWindow->clearSelection();
+    }
+}
+
+bool TerminalDisplay::alternateScreen() const
+{
+    return _alternateScreen;
+}
+
 /* ------------------------------------------------------------------------- */
 /*                                                                           */
 /*                               Clipboard                                   */
@@ -3621,6 +3643,107 @@ void TerminalDisplay::keyPressEvent( QKeyEvent* event )
         return;
     }
 
+    const int key = event->key();
+    const Qt::KeyboardModifiers mods = event->modifiers();
+
+    // --- Shift+Arrow text selection (normal screen only) ---
+    // In alternate screen (vim, less, etc.), Shift+Arrow passes through to
+    // the application as escape sequences via the keytab (+AppScreen entries).
+    // Mask out KeypadModifier — macOS sets it on arrow keys
+    const bool shiftOnly = ((mods & ~Qt::KeypadModifier) == Qt::ShiftModifier);
+    const bool isArrow = (key == Qt::Key_Left || key == Qt::Key_Right ||
+                          key == Qt::Key_Up   || key == Qt::Key_Down);
+
+    if (shiftOnly && isArrow && _screenWindow && !_alternateScreen) {
+        if (!_kbSelActive) {
+            _kbSelAnchor = _screenWindow->cursorPosition();
+            _kbSelEnd = _kbSelAnchor;
+            _kbSelActive = true;
+
+            // Detect prompt boundary: scan for the first prompt-ending
+            // character on the anchor line, then place the limit right
+            // after it (skipping an optional trailing space).
+            static const wchar_t kPromptChars[] = { '$', '%', '#', '>', ']' };
+            _kbSelLeftLimit = 0;
+            if (_image) {
+                int anchorLine = _kbSelAnchor.y();
+                int anchorX = _kbSelAnchor.x();
+                for (int x = 0; x < anchorX; x++) {
+                    wchar_t ch = _image[loc(x, anchorLine)].character;
+                    bool isPromptChar = false;
+                    for (wchar_t pc : kPromptChars)
+                        if (ch == pc) { isPromptChar = true; break; }
+                    if (isPromptChar) {
+                        int boundary = x + 1;
+                        if (boundary < anchorX &&
+                            _image[loc(boundary, anchorLine)].character == ' ')
+                            boundary++;
+                        _kbSelLeftLimit = boundary;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const int cols = _screenWindow->windowColumns();
+        const int lines = _screenWindow->windowLines();
+
+        QPoint newEnd = _kbSelEnd;
+
+        // Left limit: prompt boundary on anchor line, column 0 elsewhere
+        int leftLimit = (newEnd.y() == _kbSelAnchor.y()) ? _kbSelLeftLimit : 0;
+        if (key == Qt::Key_Right) {
+            if (newEnd.x() < cols - 1)
+                newEnd.rx()++;
+        } else if (key == Qt::Key_Left) {
+            if (newEnd.x() > leftLimit)
+                newEnd.rx()--;
+        } else if (key == Qt::Key_Up) {
+            if (newEnd.y() > 0)
+                newEnd.ry()--;
+        } else if (key == Qt::Key_Down) {
+            if (newEnd.y() < lines - 1)
+                newEnd.ry()++;
+        }
+
+        _kbSelEnd = newEnd;
+
+        // Order start/end for the selection API (start before end in reading order)
+        QPoint selStart, selEnd;
+        if (_kbSelAnchor.y() < _kbSelEnd.y() ||
+            (_kbSelAnchor.y() == _kbSelEnd.y() && _kbSelAnchor.x() <= _kbSelEnd.x())) {
+            selStart = _kbSelAnchor;
+            selEnd = _kbSelEnd;
+        } else {
+            selStart = _kbSelEnd;
+            selEnd = _kbSelAnchor;
+        }
+
+        _screenWindow->setSelectionStart(selStart.x(), selStart.y(), false);
+        _screenWindow->setSelectionEnd(selEnd.x(), selEnd.y());
+
+        event->accept();
+        return;
+    }
+
+    // --- Option+Up/Down: scroll scrollback (replaces old Shift+Up/Down) ---
+    if (((mods & ~Qt::KeypadModifier) == Qt::AltModifier) &&
+        (key == Qt::Key_Up || key == Qt::Key_Down) && _screenWindow) {
+        int delta = (key == Qt::Key_Down) ? 1 : -1;
+        _screenWindow->scrollBy(ScreenWindow::ScrollLines, delta);
+        _screenWindow->setTrackOutput(_screenWindow->atEndOfOutput());
+        emit _screenWindow->outputChanged();
+        event->accept();
+        return;
+    }
+
+    // --- Any non-Shift-Arrow key clears keyboard selection ---
+    if (_kbSelActive) {
+        _kbSelActive = false;
+        if (_screenWindow)
+            _screenWindow->clearSelection();
+    }
+
     _actSel=0; // Key stroke implies a screen update, so TerminalDisplay won't
               // know where the current selection is.
 
@@ -3737,6 +3860,10 @@ bool TerminalDisplay::handleShortcutOverrideEvent(QKeyEvent* keyEvent)
       case Qt::Key_Backspace:
       case Qt::Key_Left:
       case Qt::Key_Right:
+      case Qt::Key_Left  | (int)Qt::ShiftModifier:
+      case Qt::Key_Right | (int)Qt::ShiftModifier:
+      case Qt::Key_Up    | (int)Qt::ShiftModifier:
+      case Qt::Key_Down  | (int)Qt::ShiftModifier:
       case Qt::Key_Escape:
         keyEvent->accept();
         return true;

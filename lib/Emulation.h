@@ -233,6 +233,8 @@ public:
 
   bool programBracketedPasteMode() const;
 
+  bool programAlternateScreen() const;
+
 public slots:
 
   /** Change the size of the emulation's image */
@@ -341,6 +343,8 @@ signals:
   void programUsesMouseChanged(bool usesMouse);
 
   void programBracketedPasteModeChanged(bool bracketedPasteMode);
+
+  void programAlternateScreenChanged(bool alternateScreen);
 
   /**
    * Emitted when the contents of the screen image change.
@@ -498,9 +502,12 @@ private slots:
 
   void bracketedPasteModeChanged(bool bracketedPasteMode);
 
+  void alternateScreenChanged(bool alternateScreen);
+
 private:
   bool _usesMouse;
   bool _bracketedPasteMode;
+  bool _alternateScreen;
   QTimer _bulkTimer1{this};
   QTimer _bulkTimer2{this};
   QStringDecoder _toUtf16;
