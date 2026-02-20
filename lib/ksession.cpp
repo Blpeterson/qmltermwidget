@@ -42,6 +42,10 @@ KSession::KSession(QObject *parent) :
     connect(m_session, SIGNAL(titleChanged()), this, SIGNAL(titleChanged()));
     connect(m_session, SIGNAL(bellRequest(QString)), this, SIGNAL(bellRequest(QString)));
     connect(m_session, SIGNAL(stateChanged(int)), this, SLOT(onStateChanged(int)));
+    connect(m_session, &Session::cursorChanged, this,
+        [this](Konsole::Emulation::KeyboardCursorShape shape, bool blinking) {
+            emit cursorShapeRequest(static_cast<int>(shape), blinking);
+        });
 }
 
 KSession::~KSession()

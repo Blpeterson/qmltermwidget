@@ -744,9 +744,35 @@ void TerminalDisplay::drawLineCharString(    QPainter& painter, int x, int y, co
 
 void TerminalDisplay::setKeyboardCursorShape(QTermWidget::KeyboardCursorShape shape)
 {
-    _cursorShape = shape;
+    if (_cursorShape == shape)
+        return;
 
-    updateCursor();
+    _cursorShape = shape;
+    emit keyboardCursorShapeChanged();
+
+    update();
+}
+
+int TerminalDisplay::keyboardCursorShapeInt() const {
+    return static_cast<int>(_cursorShape);
+}
+void TerminalDisplay::setKeyboardCursorShapeInt(int shape) {
+    if (shape < 0 || shape > 2)
+        return;
+    auto s = static_cast<Emulation::KeyboardCursorShape>(shape);
+    if (_cursorShape != s) {
+        _cursorShape = s;
+        emit keyboardCursorShapeChanged();
+        update();
+    }
+}
+QString TerminalDisplay::cursorCharacter() const { return _cursorCharacter; }
+void TerminalDisplay::setCursorCharacter(const QString &ch) {
+    if (_cursorCharacter != ch) {
+        _cursorCharacter = ch;
+        emit cursorCharacterChanged();
+        update();
+    }
 }
 QTermWidget::KeyboardCursorShape TerminalDisplay::keyboardCursorShape() const
 {
@@ -816,7 +842,7 @@ void TerminalDisplay::drawBackground(QPainter& painter, const QRect& rect, const
 void TerminalDisplay::drawCursor(QPainter& painter,
                                  const QRect& rect,
                                  const QColor& foregroundColor,
-                                 const QColor& /*backgroundColor*/,
+                                 const QColor& backgroundColor,
                                  bool& invertCharacterColor)
 {
     QRect cursorRect = rect;
@@ -851,7 +877,25 @@ void TerminalDisplay::drawCursor(QPainter& painter,
             {
                 painter.fillRect(cursorRect, _cursorColor.isValid() ? _cursorColor : foregroundColor);
 
-                if ( !_cursorColor.isValid() )
+                if (!_cursorCharacter.isEmpty())
+                {
+                    // Draw the character at 65% of the terminal font pixel size
+                    // plus a fixed 5px offset (floor of 6px), then center it
+                    // within the cursor rect using a tight bounding rect.
+                    QFont charFont = font();
+                    int charSize = qMax(6, charFont.pixelSize() * 65 / 100) + 5;
+                    charFont.setPixelSize(charSize);
+                    painter.setPen(backgroundColor);
+                    painter.setFont(charFont);
+                    QString ch = _cursorCharacter.left(1);
+                    QFontMetrics fm(charFont);
+                    QRect tight = fm.tightBoundingRect(ch);
+                    int x = cursorRect.center().x() - tight.width() / 2 - tight.x();
+                    int y = cursorRect.center().y() - tight.height() / 2 - tight.y();
+                    painter.drawText(x, y, ch);
+                    invertCharacterColor = false;
+                }
+                else if ( !_cursorColor.isValid() )
                 {
                     // invert the colour used to draw the text to ensure that the character at
                     // the cursor position is readable

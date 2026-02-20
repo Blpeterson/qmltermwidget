@@ -176,6 +176,12 @@ signals:
 
     void bellRequest(const QString &message);
     void activity();
+    /**
+     * Emitted when a DECSCUSR escape sequence requests a cursor shape change.
+     * @param shape Cursor shape: 0 = Block, 1 = Underline, 2 = IBeam.
+     * @param blinking Whether the cursor should blink.
+     */
+    void cursorShapeRequest(int shape, bool blinking);
 
 public slots:
     /*! Set named key binding for given widget

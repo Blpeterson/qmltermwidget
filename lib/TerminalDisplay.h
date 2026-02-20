@@ -108,6 +108,8 @@ class KONSOLEPRIVATE_EXPORT TerminalDisplay : public QQuickPaintedItem
    Q_PROPERTY(bool enableItalic         READ getItalicEnabled WRITE setItalicEnabled NOTIFY italicEnabledChanged )
    Q_PROPERTY(bool fullCursorHeight     READ fullCursorHeight WRITE setFullCursorHeight NOTIFY fullCursorHeightChanged)
    Q_PROPERTY(bool blinkingCursor       READ blinkingCursor   WRITE setBlinkingCursor NOTIFY blinkingCursorStateChanged)
+   Q_PROPERTY(int keyboardCursorShape   READ keyboardCursorShapeInt WRITE setKeyboardCursorShapeInt NOTIFY keyboardCursorShapeChanged)
+   Q_PROPERTY(QString cursorCharacter   READ cursorCharacter  WRITE setCursorCharacter NOTIFY cursorCharacterChanged)
    Q_PROPERTY(bool antialiasText        READ antialias       WRITE setAntialias)
    Q_PROPERTY(QStringList availableColorSchemes READ availableColorSchemes NOTIFY availableColorSchemesChanged)
    Q_PROPERTY(bool useFBORendering      READ useFBORendering WRITE setUseFBORendering)
@@ -262,6 +264,11 @@ public:
      * Returns the shape of the keyboard cursor.  See setKeyboardCursorShape()
      */
     QTermWidget::KeyboardCursorShape keyboardCursorShape() const;
+
+    int keyboardCursorShapeInt() const;
+    void setKeyboardCursorShapeInt(int shape);
+    QString cursorCharacter() const;
+    void setCursorCharacter(const QString &ch);
 
     /**
      * Sets the color used to draw the keyboard cursor.
@@ -694,6 +701,8 @@ signals:
     void blinkingCursorStateChanged();
     void boldIntenseChanged();
     void italicEnabledChanged();
+    void keyboardCursorShapeChanged();
+    void cursorCharacterChanged();
 
 protected:
     bool event( QEvent * ) override;
@@ -980,6 +989,7 @@ private:
     QString extractPathTextBoundsAt(int x, int y, int &startLine, int &startCol, int &endLine, int &endCol);
 
     QTermWidget::KeyboardCursorShape _cursorShape;
+    QString _cursorCharacter;
 
     // custom cursor color.  if this is invalid then the foreground
     // color of the character under the cursor is used
