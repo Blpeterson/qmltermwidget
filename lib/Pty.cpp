@@ -185,6 +185,7 @@ int Pty::start(const QString& program,
 
   _process->setEnv(QLatin1String("WINDOWID"), QString::number(winid));
   _process->setEnv(QLatin1String("COLORTERM"), QLatin1String("truecolor"));
+  _process->setEnv(QLatin1String("TERM_PROGRAM"), QLatin1String("CRT_Plus"));
 
   // unless the LANGUAGE environment variable has been set explicitly
   // set it to a null string

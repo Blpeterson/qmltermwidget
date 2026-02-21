@@ -446,6 +446,13 @@ void Session::setUserTitle( int what, const QString & caption )
         }
     }
 
+    // OSC 9 (iTerm2), OSC 99 (kitty), OSC 777 (rxvt-unicode) — notification
+    // requests. Treat them as bell events so badges and dock icons update.
+    if (what == 9 || what == 99 || what == 777) {
+        emit bellRequest(caption);
+        return;
+    }
+
     if (what == 50) {
         emit profileChangeCommandReceived(caption);
         return;

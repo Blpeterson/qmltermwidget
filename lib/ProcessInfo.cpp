@@ -344,6 +344,17 @@ bool UnixProcessInfo::readProcessInfo(int aPid , bool enableEnvironmentRead)
         if (enableEnvironmentRead) {
             ok |= readEnvironment(aPid);
         }
+        // Some runtimes (Bun, Node) override the process name via
+        // prctl/PR_SET_NAME so proc_name() returns e.g. a version string
+        // instead of the actual executable name. Fall back to the basename
+        // of argv[0] which is always the real binary name.
+        bool argsOk = false;
+        const auto& args = arguments(&argsOk);
+        if (argsOk && !args.isEmpty()) {
+            QString argv0 = QFileInfo(args.at(0)).fileName();
+            if (!argv0.isEmpty())
+                setName(argv0);
+        }
     }
     return ok;
 }
