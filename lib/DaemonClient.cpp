@@ -123,6 +123,7 @@ bool DaemonClient::connectToDaemon()
     write_u32_le(hello + 5, static_cast<uint32_t>(QCoreApplication::applicationPid()));
 
     _sendRawMessage(MSG_HELLO, hello, sizeof(hello));
+    _socket->flush();  // Flush synchronously during handshake only
 
     // Wait for HELLO_OK
     if (!_socket->waitForReadyRead(3000)) {
@@ -266,7 +267,6 @@ void DaemonClient::_sendRawMessage(uint8_t type, const uint8_t *payload, uint32_
         memcpy(dst + HEADER_SIZE, payload, len);
 
     _socket->write(msg);
-    _socket->flush();
 }
 
 // ---------------------------------------------------------------
@@ -538,7 +538,7 @@ void DaemonClient::_dispatchMessage(uint8_t type, const uint8_t *payload, uint32
         if (_pendingCreatePty) {
             PersistentPty *pty = _pendingCreatePty;
             _pendingCreatePty = nullptr;
-    _pendingAttachPty = nullptr;
+            _pendingAttachPty = nullptr;
             _sessions.insert(uuid, pty);
             pty->handleCreateOk(uuid);
         } else {
