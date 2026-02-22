@@ -39,6 +39,8 @@ static constexpr uint32_t kDefaultLflag = ISIG | ICANON | ECHO | ECHOE | ECHOK
 PersistentPty::PersistentPty(QObject *parent)
     : PtyInterface(parent)
 {
+    connect(DaemonClient::instance(), &DaemonClient::disconnected,
+            this, &PersistentPty::_onDaemonDisconnected);
 }
 
 PersistentPty::~PersistentPty()
@@ -61,6 +63,11 @@ int PersistentPty::start(const QString &program, const QStringList &args,
 {
     Q_UNUSED(winid)
     Q_UNUSED(addToUtmp)
+
+    // Reset state so PersistentPty is reusable after daemon loss
+    _sessionExited = false;
+    _exitCode = 0;
+    _sessionId.clear();
 
     DaemonClient *client = DaemonClient::instance();
 
@@ -292,6 +299,29 @@ int PersistentPty::attachToSession(const QByteArray &sessionId)
     // the scrollback replay is fully processed by the terminal emulator.
 
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Daemon disconnect handler
+// ---------------------------------------------------------------------------
+
+void PersistentPty::_onDaemonDisconnected()
+{
+    if (_sessionExited) return;              // Already handled
+    if (_waitLoop && _waitLoop->isRunning()) {
+        _waitLoop->quit();                   // Inside start()/attach() — let caller handle
+        return;
+    }
+    if (!_attached) return;                  // Not active
+
+    // Unregister stale session before clearing ID
+    if (!_sessionId.isEmpty())
+        DaemonClient::instance()->unregisterSession(_sessionId);
+
+    _attached = false;
+    _sessionExited = true;
+    _sessionId.clear();
+    emit finished(-2, PtyExitStatus::CrashExit);  // Special exit code = daemon lost
 }
 
 // ---------------------------------------------------------------------------

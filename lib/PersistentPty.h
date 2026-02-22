@@ -79,6 +79,9 @@ public:
     void handleFgProcessInfo(int pid, const QString &name, const QString &cwd);
     void handleError(uint8_t code, const QString &msg);
 
+private slots:
+    void _onDaemonDisconnected();
+
 private:
     void _sendTermiosIfAttached();
 

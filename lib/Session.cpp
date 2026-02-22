@@ -27,6 +27,7 @@
 
 // Standard
 #include <cstdlib>
+#include <cstring>
 
 // Qt
 #include <QApplication>
@@ -330,9 +331,11 @@ void Session::run()
     /* if we do all the checking if this shell exists then we use it ;)
      * Dont know about the arguments though.. maybe youll need some more checking im not sure
      */
+    QStringList env = _environment;
+    env << backgroundColorHint;
     int result = _shellProcess->start(exec,
                                       arguments,
-                                      _environment << backgroundColorHint,
+                                      env,
                                       workDir,
                                       windowId(),
                                       _addToUtmp);
@@ -354,7 +357,7 @@ void Session::run()
         _shellProcess->setErase(_emulation->eraseChar());
 
         result = _shellProcess->start(exec, arguments,
-                                      _environment << backgroundColorHint,
+                                      env,
                                       workDir, windowId(), _addToUtmp);
     }
 
@@ -659,6 +662,22 @@ QString Session::profileKey() const
 
 void Session::done(int exitCode, PtyExitStatus exitStatus)
 {
+    // Daemon connection lost — auto-restart with new shell
+    if (exitCode == -2 && dynamic_cast<PersistentPty *>(_shellProcess)) {
+        const char *msg = "\r\n\033[33m[Session disconnected — starting new shell]\033[0m\r\n\r\n";
+        _emulation->receiveData(msg, strlen(msg));
+
+        // Reset prompt-detection state from the dead session
+        _waitingForPrompt = false;
+        _pendingReadyText.clear();
+        _promptBuffer.clear();
+        _promptTokens.clear();
+        _scrollPendingCount = 0;
+
+        QTimer::singleShot(0, this, [this]() { run(); });
+        return;
+    }
+
     if (!_autoClose) {
         _userTitle = QString::fromLatin1("This session is done. Finished");
         emit titleChanged();
