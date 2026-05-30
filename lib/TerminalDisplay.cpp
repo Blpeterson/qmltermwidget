@@ -2858,9 +2858,6 @@ void TerminalDisplay::mouseMoveEvent(QMouseEvent* ev)
         _mouseOverHotspotArea = QRegion();
   }
 
-  // for auto-hiding the cursor, we need mouseTracking
-  if (ev->buttons() == Qt::NoButton ) return;
-
   // if the terminal is interested in mouse movements
   // then emit a mouse movement signal, unless the shift
   // key is being held down, which overrides this.
@@ -2882,6 +2879,9 @@ void TerminalDisplay::mouseMoveEvent(QMouseEvent* ev)
 
     return;
   }
+
+  // for auto-hiding the cursor, we need mouseTracking
+  if (ev->buttons() == Qt::NoButton ) return;
 
   if (dragInfo.state == diPending)
   {

@@ -751,9 +751,9 @@ void Vt102Emulation::processToken(int token, wchar_t p, int q)
 
     //Note about mouse modes:
     //There are four mouse modes which xterm-compatible terminals can support - 1000,1001,1002,1003
-    //Konsole currently supports mode 1000 (basic mouse press and release) and mode 1002 (dragging the mouse).
-    //TODO:  Implementation of mouse modes 1001 (something called highlight tracking) and
-    //1003 (a slight variation on dragging the mouse)
+    //Konsole currently supports mode 1000 (basic mouse press and release), mode 1002
+    //(dragging the mouse), and mode 1003 (all mouse movement).
+    //TODO: Implementation of mouse mode 1001 (something called highlight tracking).
     //
 
     case TY_CSI_PR('h', 1000) :          setMode      (MODE_Mouse1000); break; //XTERM
@@ -962,9 +962,15 @@ void Vt102Emulation::sendMouseEvent( int cb, int cx, int cy , int eventType )
     if (cb >= 4)
       cb += 0x3c;
 
-    //Mouse motion handling
-    if ((getMode(MODE_Mouse1002) || getMode(MODE_Mouse1003)) && eventType == 1)
+    // Mouse motion handling. Mode 1002 reports drag motion only, while
+    // mode 1003 reports every movement, including moves with no button down.
+    if (eventType == 1) {
+      const bool buttonIsDown = cb >= 0 && cb <= 2;
+      if (!getMode(MODE_Mouse1003) && !(getMode(MODE_Mouse1002) && buttonIsDown))
+        return;
+
       cb += 0x20; //add 32 to signify motion event
+    }
 
     char command[40];
     command[0] = '\0';
